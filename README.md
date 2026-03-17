@@ -1,207 +1,205 @@
-# SmartJunction AI 🚦
+# SmartJunction AI — 4-Junction Edge AI Traffic System
 
-![Smart Junction Mockup](smart_junction_mockup_1773751949009.png)
-
-An Arduino-based intelligent traffic junction controller that combines physical sensors, computer vision (Roboflow), and a live Node-RED dashboard to manage traffic flow in real-time.
+> **Real-time urban traffic monitoring and control using ESP32, ESP32-CAM, YOLOv8, MQTT, and a live web dashboard.**
 
 ---
 
-## System Architecture
+## 🏗️ System Architecture
 
 ```
-[HC-SR04] [IR Sensor] [PIR Sensor]
-        ↓ (Serial UART)
-  [Arduino Mega 2560]  ←── Sensor Hub (JSON @ 115200 baud)
-        ↓ (TX1→RX2 via voltage divider)
-  [ESP32 Dev Module]   ←── Brain: WiFi + MQTT + Logic + Servo + OLED
-        ↑ (HTTP REST)          ↑ (MQTT pub/sub)
-  [ESP32-CAM]          [Node-RED Dashboard on Laptop]
-  /stream & /capture         gauges, chart, camera embed,
-        ↑ (HTTPS/POST)        override buttons
-  [Roboflow Inference API]
+┌─────────────────────────────────────────────────────────────┐
+│                   4-Junction Intersection                    │
+│                                                             │
+│         [J1]              [J2]                              │
+│      ESP32+CAM         ESP32+CAM                            │
+│      SENSOR+LED        SENSOR+LED                           │
+│           │                 │                               │
+│           └────────┬────────┘                               │
+│                    │  WiFi MQTT                              │
+│         [J3]       │       [J4]                             │
+│      ESP32+CAM ────┴──── ESP32+CAM                          │
+│      SENSOR+LED        SENSOR+LED                           │
+└────────────────────╥───────────────────────────────────────┘
+                     ║ MQTT (1883)
+          ┌──────────╨──────────┐
+          │   Edge AI Server    │  (PC / Laptop)
+          │  ┌───────────────┐  │
+          │  │ Node.js + ONNX │  │  ← pulls JPEG frames
+          │  │ YOLOv8 Inference│  │    from each ESP32-CAM
+          │  └──────┬────────┘  │
+          │         │ MQTT pub  │
+          │  ┌──────▼────────┐  │
+          │  │ Express + WS  │  │
+          │  │ Live Dashboard │  │
+          │  └───────────────┘  │
+          └─────────────────────┘
+                     │
+          http://localhost:5000
+                     │
+          ┌──────────▼──────────┐
+          │   Live Dashboard    │
+          │  • 4 junction cams  │
+          │  • Signal control   │
+          │  • Emergency banner │
+          │  • Alerts feed      │
+          │  • Intersection map │
+          └─────────────────────┘
 ```
 
 ---
 
-## Project Files
+## ✨ Features
 
-| File | Board | Purpose |
-|---|---|---|
-| `mega_sensors/mega_sensors.ino` | Arduino Mega 2560 | Reads HC-SR04 + IR + PIR, streams JSON |
-| `esp32_brain/esp32_brain.ino` | ESP32 Dev Module | Brain: receives sensor data, runs decision logic, WiFi/MQTT, Roboflow, OLED |
-| `esp32cam_stream/esp32cam_stream.ino` | AI Thinker ESP32-CAM | MJPEG stream server + `/capture` endpoint |
-| `nodered_flow/smartjunction_flow.json` | Laptop (Node-RED) | Live dashboard: gauges, chart, camera, override buttons |
-
----
-
-## Hardware Requirements
-
-| Component | Qty | Notes |
-|---|---|---|
-| Arduino Mega 2560 | 1 | Sensor hub |
-| ESP32 Dev Module | 1 | Brain board |
-| AI Thinker ESP32-CAM | 1 | Vision stream |
-| HC-SR04 Ultrasonic | 1 | Vehicle distance |
-| IR Proximity Sensor | 1 | Crosswalk beam |
-| PIR Motion Sensor | 1 | Pedestrian detection |
-| SG90 Servo | 1 | Barrier gate |
-| 0.96" OLED SSD1306 | 1 | Local status display |
-| Red + Green LEDs | 2 each | Traffic signals |
-| Active Buzzer | 1 | Pedestrian / emergency alert |
-| 1 kΩ + 2 kΩ resistors | 1 set | Voltage divider (Mega 5V → ESP32 3.3V) |
+| Feature | Detail |
+|---------|--------|
+| 🚑 Emergency vehicle detection | Ambulance / fire truck → lane cleared, other 3 junctions force RED |
+| 🚨 Adjacent junction alert | Emergency broadcast via MQTT to all 4 ESP32 nodes instantly |
+| 🚗 Traffic density management | YOLOv8 vehicle count → dynamic green-time extension for high-traffic lanes |
+| 💥 Accident / illegal activity | Multi-object heuristic → patrol alert dispatched |
+| 📷 Live camera feeds | MJPEG stream from each ESP32-CAM refreshed on dashboard in real time |
+| 🎛️ Manual controls | Per-junction RED / GREEN / YELLOW / AUTO / PATROL buttons on dashboard |
+| 📊 KPI strip | Total vehicles, emergency count, avg traffic, cameras online |
+| 🗺️ Intersection map | Visual mini-map of all 4 junctions with live signal state |
+| 🔔 Alerts log | Timestamped log of all events (ambulance, accident, patrol) |
 
 ---
 
-## Wiring Summary
+## 📦 Hardware per Junction (×4 total)
 
-### Arduino Mega → Sensors
-
-| Pin | Sensor | Notes |
-|---|---|---|
-| D9 (TRIG) | HC-SR04 Trigger | — |
-| D10 (ECHO) | HC-SR04 Echo | — |
-| D7 | IR Sensor OUT | Active-LOW (code inverts) |
-| D6 | PIR Sensor OUT | Active-HIGH |
-
-### Mega → ESP32 UART Link
-
-```
-Mega TX1 (pin 18) ──┬── 1 kΩ ── ESP32 RX2 (GPIO 16)
-                    └── 2 kΩ ── GND
-Mega GND ────────────────────── ESP32 GND
-```
-The resistor divider steps 5 V down to ~3.3 V to protect the ESP32.
-
-### ESP32 → Outputs
-
-| GPIO | Device |
-|---|---|
-| 25 | Red LED (220 Ω to GND) |
-| 26 | Green LED (220 Ω to GND) |
-| 27 | Buzzer |
-| 14 | Servo signal |
-| 21 (SDA) | OLED SDA |
-| 22 (SCL) | OLED SCL |
+| Component | Role |
+|-----------|------|
+| **ESP32 Dev Module** | WiFi brain, signal control, UART to Mega |
+| **ESP32-CAM (AI Thinker)** | Live MJPEG stream for YOLO inference |
+| **Arduino Mega** | IR + Ultrasonic sensor aggregation → UART JSON |
+| **IR sensor** | Crosswalk beam presence |
+| **Ultrasonic (HC-SR04)** | Approaching vehicle distance |
+| **PIR sensor** | Pedestrian motion |
+| **3× LEDs (R/Y/G)** | Traffic signal |
+| **Servo motor** | Barrier gate |
+| **Active buzzer** | Emergency / pedestrian alert |
+| **OLED 128×64 (I²C)** | Local status display |
 
 ---
 
-## Software Setup
-
-### Step 1 — Arduino IDE Board Support
-
-Open **File → Preferences** and add this URL to *Additional Boards Manager URLs*:
+## 📂 File Structure
 
 ```
-https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+SmartJunction_AI/
+├── esp32_brain/
+│   └── esp32_brain.ino         # ESP32 firmware (flash to each junction board)
+├── esp32cam_stream/
+│   └── esp32cam_stream.ino     # ESP32-CAM firmware (stream + MQTT heartbeat)
+├── mega_sensors/
+│   └── mega_sensors.ino        # Arduino Mega sensor aggregator
+├── edge_ai_server/
+│   ├── server.js               # Node.js Edge Server (YOLOv8 + Express + MQTT)
+│   ├── package.json            # Node.js dependencies
+│   ├── .env                    # Configuration (Camera IPs, MQTT)
+│   ├── start.bat               # Windows quick-start script
+│   └── public/
+│       └── dashboard.html      # Live web dashboard
+└── README.md
 ```
-
-Then install **ESP32 by Espressif Systems** via **Tools → Board → Boards Manager**.
-
-### Step 2 — Required Libraries
-
-Install via **Sketch → Include Library → Manage Libraries**:
-
-| Library | Author |
-|---|---|
-| ArduinoJson | Benoit Blanchon |
-| PubSubClient | Nick O'Leary |
-| ESP32Servo | Kevin Harrington |
-| NewPing | Tim Eckel |
-| Adafruit SSD1306 | Adafruit |
-| Adafruit GFX Library | Adafruit |
-
-`HTTPClient`, `WiFi`, and `base64` are built into the ESP32 Arduino core.
-
-### Step 3 — Configure Credentials
-
-In **both** `esp32_brain.ino` and `esp32cam_stream.ino`, fill in:
-
-```cpp
-const char* WIFI_SSID     = "YOUR_WIFI_NAME";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-const char* MQTT_BROKER   = "192.168.1.100";  // your laptop's LAN IP
-```
-
-In `esp32_brain.ino` also fill in:
-
-```cpp
-const char* RF_API_KEY    = "YOUR_ROBOFLOW_API_KEY";
-const char* RF_MODEL_ID   = "your-model-name/1";
-const char* CAM_STREAM_IP = "192.168.1.105";  // ESP32-CAM IP (shown in Serial Monitor)
-```
-
-### Step 4 — Flash Order
-
-1. Flash `mega_sensors.ino` → Arduino Mega (port: COMx, board: Arduino Mega 2560)
-2. Flash `esp32cam_stream.ino` → ESP32-CAM (**Board: AI Thinker ESP32-CAM**, Partition: Huge APP, PSRAM: Enabled)
-3. Open Serial Monitor @ 115200 to get CAM IP → paste into `CAM_STREAM_IP` in esp32_brain.ino
-4. Flash `esp32_brain.ino` → ESP32 Dev Module
 
 ---
 
-## Roboflow Setup
+## ⚡ Quick Start
 
-1. Create a free account at [roboflow.com](https://roboflow.com)
-2. New Project → **Object Detection**
-3. Upload 50-100 images with vehicles and pedestrians (or use Roboflow Universe datasets)
-4. Annotate: label `vehicle` and `person`
-5. Train → **Roboflow 3.0 Fast** (free, ~10 min)
-6. Deploy → copy your **API Key** and **Model ID**
-
----
-
-## Node-RED Dashboard
-
-### Install Node-RED
-
+### 1. Set up MQTT Broker (Mosquitto)
 ```bash
-npm install -g node-red
-node-red
+# Windows — download from mosquitto.org
+# then run:
+mosquitto -v
 ```
 
-Open [http://localhost:1880](http://localhost:1880).
+### 2. Set up Edge AI Server
+```bash
+cd edge_ai_server
+npm install
+node download-model.js          # Downloads yolov8n.onnx
+npm start
+```
 
-### Install Mosquitto MQTT Broker (on laptop)
+Dashboard opens at **http://localhost:5000**
 
-- **Windows**: [mosquitto.org/download](https://mosquitto.org/download/) — just install and run as a service
-- **Linux/Mac**: `sudo apt install mosquitto` or `brew install mosquitto`
+### 3. Flash ESP32 (one per junction)
+1. Open `esp32_brain/esp32_brain.ino` in Arduino IDE
+2. Change `JUNCTION_ID` → `"J1"` (or J2/J3/J4)
+3. Fill in `WIFI_SSID`, `WIFI_PASS`, `MQTT_HOST`
+4. Select **Board**: *ESP32 Dev Module*
+5. Flash
 
-### Install Dashboard Palette
-
-In Node-RED: **☰ → Manage Palette → Install** → search `node-red-dashboard`
-
-### Import the Flow
-
-**☰ → Import** → paste the contents of `nodered_flow/smartjunction_flow.json` → Deploy.
-
-Dashboard lives at: [http://localhost:1880/ui](http://localhost:1880/ui)
+### 4. Flash ESP32-CAM (one per junction)
+1. Open `esp32cam_stream/esp32cam_stream.ino`
+2. Change `JUNCTION_ID` to match
+3. Fill in WiFi credentials
+4. Select **Board**: *AI Thinker ESP32-CAM*
+5. **Partition**: Huge APP (3MB, No OTA)
+6. Flash
 
 ---
 
-## MQTT Topics
+## 🔧 MQTT Topics Reference
 
-| Topic | Direction | Payload |
-|---|---|---|
-| `smartjunction/sensors` | ESP32 → Node-RED | `{"dist":42,"ir":0,"pir":0,"cong":60}` |
-| `smartjunction/vision` | ESP32 → Node-RED | `{"vehicles":2,"persons":0}` |
-| `smartjunction/status` | ESP32 → Node-RED | `"NORMAL"` / `"PEDESTRIAN_HOLD"` / `"EMERGENCY"` |
-| `smartjunction/override` | Node-RED → ESP32 | `"GREEN"` / `"RED"` / `"EMERGENCY"` / `"CLEAR"` |
-
----
-
-## Decision Logic (ESP32 Brain)
-
-```
-Priority 1 (highest): EMERGENCY mode       → All-red + barrier down + buzzer
-Priority 2:           Pedestrian detected  → Red + barrier + buzzer 3s
-Priority 3:           Vehicle < 80cm       → Predictive GREEN + raise barrier
-Priority 4 (default): Clear               → GREEN + raise barrier + silent
-```
-
-Remote overrides from Node-RED buttons override priorities 2-4.
+| Topic | Direction | Description |
+|-------|-----------|-------------|
+| `smartjunction/J1/sensors` | ESP32 → Server | Sensor telemetry (dist, IR, PIR, signal, etc.) |
+| `smartjunction/J1/camera` | ESP32-CAM → Server | Camera registration & heartbeat |
+| `smartjunction/J1/vision` | Server → ESP32 | YOLO inference results |
+| `smartjunction/J1/cmd` | Dashboard → ESP32 | Signal control commands |
+| `smartjunction/emergency` | Broadcast | Emergency vehicle events |
+| `smartjunction/alerts` | All nodes | Incidents log |
 
 ---
 
-## License
+## 🚦 Signal Priority Logic
 
-MIT — free to use for educational and research purposes.
+```
+Priority (highest → lowest)
+┌──────────────────────────────────────────────┐
+│ 1. Emergency vehicle (ambulance/fire truck)  │  → Lane GREEN, others RED
+│ 2. Manual override from dashboard            │  → Dashboard-set signal
+│ 3. High traffic density (score > 70%)        │  → Extended green time
+│ 4. Normal adaptive cycle (15–40 s green)     │  → Auto slot allocation
+└──────────────────────────────────────────────┘
+```
+
+---
+
+## 🌐 Dashboard API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Live dashboard |
+| `/api/state` | GET | Full system state (JSON) |
+| `/api/state/<J1>` | GET | Single junction state |
+| `/api/alerts` | GET | All alerts log |
+| `/api/cameras` | GET | Camera URLs & status |
+| `/api/frame/<J1>` | GET | Latest JPEG frame (proxied) |
+| `/api/cmd/<J1>/<CMD>` | POST | Send command to junction |
+| `/api/emergency/clear` | POST | Clear emergency across all junctions |
+
+---
+
+## 🛠️ Configuration
+
+Edit `edge_ai_server/.env`:
+
+```env
+J1_CAM_IP=192.168.1.101   # IP of Junction 1 ESP32-CAM
+J2_CAM_IP=192.168.1.102
+J3_CAM_IP=192.168.1.103
+J4_CAM_IP=192.168.1.104
+YOLO_MODEL=yolov8n.pt     # nano=fastest, s=balanced, m=accurate
+INFER_FPS=2.0             # inference frames per second per camera
+CONF_THRESH=0.45          # YOLO confidence threshold
+```
+
+---
+
+## ⚠️ Notes
+
+- Flash a **different `JUNCTION_ID`** (`"J1"`–`"J4"`) to each ESP32 and ESP32-CAM pair before deploying.
+- All 4 junction nodes must use the same WiFi network as the edge server.
+- YOLOv8 `yolov8n.pt` downloads automatically on first run (~6 MB).
+- For best ambulance/fire truck detection, fine-tune on a custom dataset or use `yolov8s.pt` as a base.
