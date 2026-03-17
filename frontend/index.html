@@ -3,154 +3,148 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SmartJunction AI | Live Control Center</title>
-    <meta name="description" content="Intelligent traffic management system dashboard for SmartJunction AI.">
-    
-    <!-- Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
-    
-    <!-- Icons -->
+    <title>SmartJunction AI | Master Traffic Node</title>
+    <!-- Cinematic HUD Interface v4.1 -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
-<body>
-    <div class="glass-overlay"></div>
+<body class="hud-interface">
+    <!-- Fullscreen Emergency State Overlay -->
+    <div id="danger-hud" class="emergency-hud"></div>
     
-    <main class="app-container">
-        <!-- Header -->
+    <div class="app-container">
+        <!-- Cinematic Header -->
         <header class="main-header">
             <div class="logo-area">
-                <div class="pulse-icon"></div>
-                <h1>SmartJunction <span class="accent">AI</span></h1>
+                <div class="pulse-node"></div>
+                <h1>SmartJunction <span>AI</span></h1>
             </div>
-            <div class="system-status">
-                <span class="status-dot online"></span>
-                <span id="connection-status">SYSTEM ONLINE</span>
+            
+            <div class="header-controls">
+                <div class="selector-hud">
+                    <label>NODE SELECTOR</label>
+                    <select id="jct-select" onchange="switchJunction(this.value)">
+                        <option value="J1">JUNCTION J1</option>
+                        <option value="J2">JUNCTION J2</option>
+                        <option value="J3">JUNCTION J3</option>
+                        <option value="J4">JUNCTION J4</option>
+                    </select>
+                </div>
+                
+                <div class="system-status">
+                    <span class="status-dot online" id="status-dot"></span>
+                    <span id="connection-status">LINK ACTIVE</span>
+                </div>
             </div>
         </header>
 
-        <section class="dashboard-grid">
-            <!-- Left Column: Camera Stream -->
-            <div class="grid-card stream-card">
-                <div class="card-header">
-                    <i data-lucide="video"></i>
-                    <h2>Live Vision Feed</h2>
-                    <span class="live-tag">LIVE</span>
+        <!-- Global HUD Quick Actions -->
+        <section class="global-hud-bar">
+            <span class="hud-label">// CITY OVERRIDE:</span>
+            <button class="hud-btn btn-g" onclick="sendCommand('ALL', 'GREEN')">GREEN ALL</button>
+            <button class="hud-btn btn-r" onclick="sendCommand('ALL', 'RED')">RED ALL</button>
+            <button class="hud-btn btn-a" onclick="sendCommand('ALL', 'AUTO')">AUTO RESET</button>
+            <button class="hud-btn btn-em" onclick="sendCommand('GLOBAL', 'CLEAR_EMERGENCY')" style="margin-left:auto; border-color:rgba(239,68,68,0.5); color:#ef4444">✕ CLEAR ALERTS</button>
+        </section>
+
+        <!-- Cinematic Viewport -->
+        <section class="main-viewport">
+            <div class="video-frame">
+                <img id="stream-focus" src="" class="main-stream-img hidden">
+                <div class="camera-placeholder" id="placeholder-focus">
+                    <i data-lucide="video-off"></i>
+                    <p>// AWAITING SIGNAL...</p>
                 </div>
-                <div class="video-container">
-                    <div class="camera-placeholder">
-                        <i data-lucide="camera-off"></i>
-                        <p>Awaiting ESP32-CAM Stream...</p>
-                        <small>Connect hardware to view real-time feed</small>
-                    </div>
-                    <!-- Actual stream would go here: <img src="http://192.168.1.105/stream" id="stream-src"> -->
+                
+                <!-- HUD Overlays -->
+                <div class="cam-hud-overlay">
+                    <span class="rec-dot"></span>
+                    <span id="meta-focus">SOURCE: J1</span>
                 </div>
-                <div class="stream-info">
-                    <div class="info-item">
-                        <span class="label">FPS</span>
-                        <span class="value" id="fps-val">30</span>
-                    </div>
-                    <div class="info-item">
-                        <span class="label">RESOLUTION</span>
-                        <span class="value">VGA (640x480)</span>
-                    </div>
+                
+                <div class="overlay-dets" id="dets-focus">
+                    <!-- AI detection labels -->
                 </div>
             </div>
 
-            <!-- Right Column Top: Gauges -->
-            <div class="right-col">
-                <div class="grid-card gauge-card">
-                    <div class="card-header">
-                        <i data-lucide="activity"></i>
-                        <h2>Traffic Density</h2>
-                    </div>
-                    <div class="gauges-wrapper">
-                        <div class="gauge-box">
-                            <div class="circular-progress" id="congestion-gauge">
-                                <div class="inner-circle">
-                                    <span class="gauge-value" id="cong-val">0</span>
-                                    <span class="gauge-unit">%</span>
-                                </div>
-                            </div>
-                            <label>Congestion</label>
+            <!-- Dashboard Side Stats -->
+            <div class="side-hud">
+                <div class="hud-card">
+                    <h3><i data-lucide="bar-chart-3"></i> REAL-TIME TELEMETRY</h3>
+                    <div class="stat-grid">
+                        <div class="stat-row">
+                            <span class="stat-tag">Vehicles Detected</span>
+                            <span class="stat-val" id="sv-focus">0</span>
                         </div>
-                        <div class="gauge-box">
-                            <div class="circular-progress" id="distance-gauge">
-                                <div class="inner-circle">
-                                    <span class="gauge-value" id="dist-val">--</span>
-                                    <span class="gauge-unit">cm</span>
-                                </div>
-                            </div>
-                            <label>Proximity</label>
+                        <div class="stat-row">
+                            <span class="stat-tag">People Detected</span>
+                            <span class="stat-val" id="sp-focus">0</span>
+                        </div>
+                        <div class="stat-row" style="border-bottom:none">
+                            <span class="stat-tag">Object Proximity</span>
+                            <span class="stat-val" id="sd-focus">--</span>
                         </div>
                     </div>
                 </div>
 
-                <!-- Vision Detections -->
-                <div class="grid-card vision-stats">
-                    <div class="card-header">
-                        <i data-lucide="eye"></i>
-                        <h2>AI Object Detection</h2>
+                <div class="hud-card">
+                    <h3><i data-lucide="cpu"></i> NODE COMMAND</h3>
+                    <div class="control-hud">
+                        <button class="ctrl-hud-btn" onclick="sendCommand('SELECTED', 'GREEN')">
+                            <i data-lucide="check-circle-2"></i>
+                            <span>FORCE GREEN</span>
+                        </button>
+                        <button class="ctrl-hud-btn" onclick="sendCommand('SELECTED', 'RED')">
+                            <i data-lucide="x-circle"></i>
+                            <span>FORCE RED</span>
+                        </button>
+                        <button class="ctrl-hud-btn" onclick="sendCommand('SELECTED', 'YELLOW')">
+                            <i data-lucide="alert-triangle"></i>
+                            <span>YEL READY</span>
+                        </button>
+                        <button class="ctrl-hud-btn" onclick="sendCommand('SELECTED', 'AUTO')">
+                            <i data-lucide="refresh-cw"></i>
+                            <span>AI AUTO</span>
+                        </button>
+                        <button class="ctrl-hud-btn" onclick="sendCommand('SELECTED', 'ALERT_PATROL')" style="grid-column: span 2;">
+                            <i data-lucide="shield-alert"></i>
+                            <span>PATROL NEEDED</span>
+                        </button>
                     </div>
-                    <div class="stats-grid">
-                        <div class="stat-item">
-                            <i data-lucide="car"></i>
-                            <div class="stat-content">
-                                <span class="stat-label">Vehicles</span>
-                                <span class="stat-number" id="veh-count">0</span>
-                            </div>
-                        </div>
-                        <div class="stat-item">
-                            <i data-lucide="user"></i>
-                            <div class="stat-content">
-                                <span class="stat-label">Pedestrians</span>
-                                <span class="stat-number" id="ped-count">0</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="detection-log" id="detection-log">
-                        <div class="log-entry">Scanning junction parameters...</div>
+                </div>
+
+                <div class="hud-card" style="flex-grow: 1;">
+                    <h3><i data-lucide="activity"></i> FLOW DENSITY</h3>
+                    <div class="meter-label">TRAFFIC LOAD: <span id="ts-focus">0%</span></div>
+                    <div class="meter-track">
+                        <div class="meter-fill" id="bar-focus"></div>
                     </div>
                 </div>
             </div>
         </section>
 
-        <!-- Bottom Row: Controls -->
-        <section class="controls-section">
-            <div class="grid-card controls-card">
-                <div class="card-header">
-                    <i data-lucide="sliders-horizontal"></i>
-                    <h2>Manual Override Command Center</h2>
+        <!-- Command Log -->
+        <section class="terminal-row">
+            <div class="terminal-container">
+                <span class="hud-label">// SYSTEM_AUDIT_LOG_v4.1</span>
+                <div class="hud-terminal" id="system-log">
                 </div>
-                <div class="button-group">
-                    <button class="control-btn btn-green" onclick="sendCommand('GREEN')">
-                        <i data-lucide="check-circle"></i>
-                        FORCE GREEN
-                    </button>
-                    <button class="control-btn btn-red" onclick="sendCommand('RED')">
-                        <i data-lucide="x-circle"></i>
-                        FORCE RED
-                    </button>
-                    <button class="control-btn btn-emergency" onclick="sendCommand('EMERGENCY')">
-                        <i data-lucide="alert-triangle"></i>
-                        EMERGENCY
-                    </button>
-                    <button class="control-btn btn-clear" onclick="sendCommand('CLEAR')">
-                        <i data-lucide="rotate-ccw"></i>
-                        RESET TO AUTO
-                    </button>
+            </div>
+            
+            <div class="network-container">
+                <span class="hud-label">// INFRASTRUCTURE</span>
+                <div class="hud-terminal" id="network-list">
                 </div>
             </div>
         </section>
 
         <footer class="app-footer">
-            <p>&copy; 2026 SmartJunction AI | Developed by <span class="author">Jesin Milesh</span></p>
+            &copy; 2026 SMARTJUNCTION AI // CORE_NODE_DASHBOARD_STABLE_4.1
         </footer>
-    </main>
+    </div>
 
+    <!-- Interface Logic -->
     <script src="script.js"></script>
     <script>
         lucide.createIcons();

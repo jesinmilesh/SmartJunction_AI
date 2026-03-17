@@ -1,0 +1,207 @@
+[
+  {
+    "id": "broker-local",
+    "type": "mqtt-broker",
+    "name": "Local MQTT (Mosquitto)",
+    "broker": "localhost",
+    "port": "1883",
+    "clientid": "node-red-smartjunction",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true
+  },
+  {
+    "id": "tab-dashboard",
+    "type": "ui_tab",
+    "name": "SmartJunction AI",
+    "icon": "traffic",
+    "disabled": false,
+    "hidden": false
+  },
+  {
+    "id": "group-j1", "type": "ui_group", "name": "Junction J1", "tab": "tab-dashboard", "order": 1, "disp": true, "width": "6", "collapse": false
+  },
+  {
+    "id": "group-j2", "type": "ui_group", "name": "Junction J2", "tab": "tab-dashboard", "order": 2, "disp": true, "width": "6", "collapse": false
+  },
+  {
+    "id": "group-j3", "type": "ui_group", "name": "Junction J3", "tab": "tab-dashboard", "order": 3, "disp": true, "width": "6", "collapse": false
+  },
+  {
+    "id": "group-j4", "type": "ui_group", "name": "Junction J4", "tab": "tab-dashboard", "order": 4, "disp": true, "width": "6", "collapse": false
+  },
+  {
+    "id": "group-alerts", "type": "ui_group", "name": "Emergency Alerts", "tab": "tab-dashboard", "order": 5, "disp": true, "width": "12", "collapse": false
+  },
+  {
+    "id": "group-controls", "type": "ui_group", "name": "Manual Override (All Junctions)", "tab": "tab-dashboard", "order": 6, "disp": true, "width": "12", "collapse": false
+  },
+
+  {
+    "id": "mqtt-in-j1-sensors",
+    "type": "mqtt in",
+    "name": "J1 Sensors",
+    "topic": "smartjunction/J1/sensors",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "broker-local",
+    "wires": [["fn-j1-sensors"]]
+  },
+  {
+    "id": "fn-j1-sensors",
+    "type": "function",
+    "name": "Parse J1 sensors",
+    "func": "var p = msg.payload;\nreturn [\n  { payload: p.vehicles || 0 },\n  { payload: p.traffic_score || 0 },\n  { payload: p.signal || '?' },\n  { payload: p.ambulance ? '🚑 AMBULANCE' : (p.fire_truck ? '🚒 FIRE TRUCK' : (p.accident ? '💥 ACCIDENT' : '✅ Normal')) }\n];",
+    "outputs": 4,
+    "wires": [["text-j1-vehicles"], ["gauge-j1-traffic"], ["text-j1-signal"], ["text-j1-alert"]]
+  },
+  {
+    "id": "text-j1-vehicles", "type": "ui_text", "group": "group-j1", "order": 1, "width": "3", "label": "Vehicles", "format": "🚗 {{msg.payload}}", "layout": "row-spread", "wires": []
+  },
+  {
+    "id": "gauge-j1-traffic", "type": "ui_gauge", "group": "group-j1", "order": 2, "width": "3", "gtype": "gage", "title": "Traffic Score", "label": "%", "format": "{{value}}", "min": "0", "max": "100", "colors": ["#00b400","#e6e600","#ca3838"], "seg1": "40", "seg2": "70", "wires": []
+  },
+  {
+    "id": "text-j1-signal", "type": "ui_text", "group": "group-j1", "order": 3, "width": "3", "label": "Signal", "format": "<b>{{msg.payload}}</b>", "layout": "row-spread", "wires": []
+  },
+  {
+    "id": "text-j1-alert", "type": "ui_text", "group": "group-j1", "order": 4, "width": "3", "label": "Status", "format": "{{msg.payload}}", "layout": "row-spread", "wires": []
+  },
+
+  {
+    "id": "mqtt-in-j2-sensors",
+    "type": "mqtt in",
+    "name": "J2 Sensors",
+    "topic": "smartjunction/J2/sensors",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "broker-local",
+    "wires": [["fn-j2-sensors"]]
+  },
+  {
+    "id": "fn-j2-sensors",
+    "type": "function",
+    "name": "Parse J2 sensors",
+    "func": "var p = msg.payload;\nreturn [\n  { payload: p.vehicles || 0 },\n  { payload: p.traffic_score || 0 },\n  { payload: p.signal || '?' },\n  { payload: p.ambulance ? '🚑 AMBULANCE' : (p.fire_truck ? '🚒 FIRE TRUCK' : (p.accident ? '💥 ACCIDENT' : '✅ Normal')) }\n];",
+    "outputs": 4,
+    "wires": [["text-j2-vehicles"], ["gauge-j2-traffic"], ["text-j2-signal"], ["text-j2-alert"]]
+  },
+  {
+    "id": "text-j2-vehicles", "type": "ui_text", "group": "group-j2", "order": 1, "width": "3", "label": "Vehicles", "format": "🚗 {{msg.payload}}", "layout": "row-spread", "wires": []
+  },
+  {
+    "id": "gauge-j2-traffic", "type": "ui_gauge", "group": "group-j2", "order": 2, "width": "3", "gtype": "gage", "title": "Traffic Score", "label": "%", "format": "{{value}}", "min": "0", "max": "100", "colors": ["#00b400","#e6e600","#ca3838"], "seg1": "40", "seg2": "70", "wires": []
+  },
+  {
+    "id": "text-j2-signal", "type": "ui_text", "group": "group-j2", "order": 3, "width": "3", "label": "Signal", "format": "<b>{{msg.payload}}</b>", "layout": "row-spread", "wires": []
+  },
+  {
+    "id": "text-j2-alert", "type": "ui_text", "group": "group-j2", "order": 4, "width": "3", "label": "Status", "format": "{{msg.payload}}", "layout": "row-spread", "wires": []
+  },
+
+  {
+    "id": "mqtt-in-j3-sensors",
+    "type": "mqtt in",
+    "name": "J3 Sensors",
+    "topic": "smartjunction/J3/sensors",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "broker-local",
+    "wires": [["fn-j3-sensors"]]
+  },
+  {
+    "id": "fn-j3-sensors",
+    "type": "function",
+    "name": "Parse J3 sensors",
+    "func": "var p = msg.payload;\nreturn [\n  { payload: p.vehicles || 0 },\n  { payload: p.traffic_score || 0 },\n  { payload: p.signal || '?' },\n  { payload: p.ambulance ? '🚑 AMBULANCE' : (p.fire_truck ? '🚒 FIRE TRUCK' : (p.accident ? '💥 ACCIDENT' : '✅ Normal')) }\n];",
+    "outputs": 4,
+    "wires": [["text-j3-vehicles"], ["gauge-j3-traffic"], ["text-j3-signal"], ["text-j3-alert"]]
+  },
+  {
+    "id": "text-j3-vehicles", "type": "ui_text", "group": "group-j3", "order": 1, "width": "3", "label": "Vehicles", "format": "🚗 {{msg.payload}}", "layout": "row-spread", "wires": []
+  },
+  {
+    "id": "gauge-j3-traffic", "type": "ui_gauge", "group": "group-j3", "order": 2, "width": "3", "gtype": "gage", "title": "Traffic Score", "label": "%", "format": "{{value}}", "min": "0", "max": "100", "colors": ["#00b400","#e6e600","#ca3838"], "seg1": "40", "seg2": "70", "wires": []
+  },
+  {
+    "id": "text-j3-signal", "type": "ui_text", "group": "group-j3", "order": 3, "width": "3", "label": "Signal", "format": "<b>{{msg.payload}}</b>", "layout": "row-spread", "wires": []
+  },
+  {
+    "id": "text-j3-alert", "type": "ui_text", "group": "group-j3", "order": 4, "width": "3", "label": "Status", "format": "{{msg.payload}}", "layout": "row-spread", "wires": []
+  },
+
+  {
+    "id": "mqtt-in-j4-sensors",
+    "type": "mqtt in",
+    "name": "J4 Sensors",
+    "topic": "smartjunction/J4/sensors",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "broker-local",
+    "wires": [["fn-j4-sensors"]]
+  },
+  {
+    "id": "fn-j4-sensors",
+    "type": "function",
+    "name": "Parse J4 sensors",
+    "func": "var p = msg.payload;\nreturn [\n  { payload: p.vehicles || 0 },\n  { payload: p.traffic_score || 0 },\n  { payload: p.signal || '?' },\n  { payload: p.ambulance ? '🚑 AMBULANCE' : (p.fire_truck ? '🚒 FIRE TRUCK' : (p.accident ? '💥 ACCIDENT' : '✅ Normal')) }\n];",
+    "outputs": 4,
+    "wires": [["text-j4-vehicles"], ["gauge-j4-traffic"], ["text-j4-signal"], ["text-j4-alert"]]
+  },
+  {
+    "id": "text-j4-vehicles", "type": "ui_text", "group": "group-j4", "order": 1, "width": "3", "label": "Vehicles", "format": "🚗 {{msg.payload}}", "layout": "row-spread", "wires": []
+  },
+  {
+    "id": "gauge-j4-traffic", "type": "ui_gauge", "group": "group-j4", "order": 2, "width": "3", "gtype": "gage", "title": "Traffic Score", "label": "%", "format": "{{value}}", "min": "0", "max": "100", "colors": ["#00b400","#e6e600","#ca3838"], "seg1": "40", "seg2": "70", "wires": []
+  },
+  {
+    "id": "text-j4-signal", "type": "ui_text", "group": "group-j4", "order": 3, "width": "3", "label": "Signal", "format": "<b>{{msg.payload}}</b>", "layout": "row-spread", "wires": []
+  },
+  {
+    "id": "text-j4-alert", "type": "ui_text", "group": "group-j4", "order": 4, "width": "3", "label": "Status", "format": "{{msg.payload}}", "layout": "row-spread", "wires": []
+  },
+
+
+  {
+    "id": "mqtt-in-emergency", "type": "mqtt in", "name": "Emergency Broadcast", "topic": "smartjunction/emergency", "qos": "1", "datatype": "json", "broker": "broker-local", "wires": [["fn-emergency"]]
+  },
+  {
+    "id": "fn-emergency", "type": "function", "name": "Format Emergency", "func": "var p = msg.payload;\nif (p.type === 'CLEAR') {\n  msg.payload = '✅ Emergency CLEARED';\n} else {\n  var icon = p.type === 'AMBULANCE' ? '🚑' : '🚒';\n  msg.payload = icon + ' ' + p.type + ' at Junction ' + p.source + ' — All others RED!';\n}\nreturn msg;", "outputs": 1, "wires": [["text-emergency"]]
+  },
+  {
+    "id": "text-emergency", "type": "ui_text", "group": "group-alerts", "order": 1, "width": "12", "label": "Emergency", "format": "<span style='font-size:1.2em;font-weight:bold'>{{msg.payload}}</span>", "layout": "row-spread", "wires": []
+  },
+
+  {
+    "id": "btn-green-all", "type": "ui_button", "name": "Force GREEN all", "group": "group-controls", "order": 1, "width": "3", "label": "🟢 GREEN All", "bgcolor": "#1a7a1a", "wires": [["fn-green-all"]]
+  },
+  {
+    "id": "fn-green-all", "type": "function", "name": "GREEN all junctions", "func": "var jcts = ['J1','J2','J3','J4'];\nreturn jcts.map(j => ({ topic:'smartjunction/'+j+'/cmd', payload:'GREEN' }));", "outputs": 4, "wires": [["mqtt-cmd-out"], ["mqtt-cmd-out"], ["mqtt-cmd-out"], ["mqtt-cmd-out"]]
+  },
+  {
+    "id": "btn-red-all", "type": "ui_button", "name": "Force RED all", "group": "group-controls", "order": 2, "width": "3", "label": "🔴 RED All", "bgcolor": "#7a1a1a", "wires": [["fn-red-all"]]
+  },
+  {
+    "id": "fn-red-all", "type": "function", "name": "RED all junctions", "func": "var jcts = ['J1','J2','J3','J4'];\nreturn jcts.map(j => ({ topic:'smartjunction/'+j+'/cmd', payload:'RED' }));", "outputs": 4, "wires": [["mqtt-cmd-out"], ["mqtt-cmd-out"], ["mqtt-cmd-out"], ["mqtt-cmd-out"]]
+  },
+  {
+    "id": "btn-auto-all", "type": "ui_button", "name": "Auto all", "group": "group-controls", "order": 3, "width": "3", "label": "♻ AUTO All", "bgcolor": "#15527a", "wires": [["fn-auto-all"]]
+  },
+  {
+    "id": "fn-auto-all", "type": "function", "name": "AUTO all junctions", "func": "var jcts = ['J1','J2','J3','J4'];\nreturn jcts.map(j => ({ topic:'smartjunction/'+j+'/cmd', payload:'AUTO' }));", "outputs": 4, "wires": [["mqtt-cmd-out"], ["mqtt-cmd-out"], ["mqtt-cmd-out"], ["mqtt-cmd-out"]]
+  },
+  {
+    "id": "btn-clear-emergency", "type": "ui_button", "name": "Clear Emergency", "group": "group-controls", "order": 4, "width": "3", "label": "✅ Clear Emergency", "bgcolor": "#b30000", "wires": [["fn-clear-emergency"]]
+  },
+  {
+    "id": "fn-clear-emergency", "type": "function", "name": "Clear emergency", "func": "msg.topic = 'smartjunction/emergency';\nmsg.payload = JSON.stringify({ source:'NodeRED', type:'CLEAR' });\nreturn msg;", "outputs": 1, "wires": [["mqtt-cmd-out-raw"]]
+  },
+  {
+    "id": "mqtt-cmd-out", "type": "mqtt out", "name": "MQTT Command OUT", "topic": "", "qos": "0", "broker": "broker-local", "wires": []
+  },
+  {
+    "id": "mqtt-cmd-out-raw", "type": "mqtt out", "name": "MQTT Raw OUT", "topic": "", "qos": "1", "broker": "broker-local", "wires": []
+  }
+]

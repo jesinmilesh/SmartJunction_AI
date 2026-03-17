@@ -46,7 +46,7 @@ jobs:
         run: |
           arduino-cli compile \
             --fqbn arduino:avr:mega \
-            mega_sensors/mega_sensors.ino
+            firmware/mega_sensors/mega_sensors.ino
 
       # BUG 1 FIXED: was esp32:esp32:esp32cam (CAM board) — brain needs esp32:esp32:esp32
       # BUG 3 FIXED: added --additional-urls so the esp32 core is actually found
@@ -55,7 +55,7 @@ jobs:
           arduino-cli compile \
             --fqbn esp32:esp32:esp32 \
             --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json \
-            esp32_brain/esp32_brain.ino
+            firmware/esp32_brain/esp32_brain.ino
 
       # Optional: also compile the CAM sketch separately if you have it
       - name: Compile ESP32-CAM Sketch
@@ -63,7 +63,7 @@ jobs:
           arduino-cli compile \
             --fqbn esp32:esp32:esp32cam \
             --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json \
-            esp32cam_stream/esp32cam_stream.ino
+            firmware/esp32cam_stream/esp32cam_stream.ino
 
   web-deploy:
     runs-on: ubuntu-latest

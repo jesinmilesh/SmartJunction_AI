@@ -1,9 +1,12 @@
 {
   "name": "smart-junction-ai",
-  "version": "1.0.0",
-  "description": "Smart Traffic Junction with Computer Vision and IoT Dashboard",
+  "version": "2.1.0",
+  "description": "SmartJunction AI — 4-Junction Edge AI Traffic Monitoring for Urban Cities",
   "scripts": {
-    "dashboard": "npm start --prefix nodered_flow",
+    "start": "npm start --prefix edge_ai_server",
+    "dev": "npm run dev --prefix edge_ai_server",
+    "install:server": "npm install --prefix edge_ai_server",
+    "download:model": "node edge_ai_server/download-model.js",
     "frontend": "npx -y serve ./frontend",
     "setup:arduino": "arduino-cli core install arduino:avr",
     "libs:install": "arduino-cli lib install \"ArduinoJson\" \"PubSubClient\" \"ESP32Servo\" \"NewPing\" \"Adafruit SSD1306\" \"Adafruit GFX Library\""
@@ -13,13 +16,17 @@
     "url": "https://github.com/jesinmilesh/SmartJunction_AI"
   },
   "keywords": [
-    "arduino",
     "esp32",
+    "esp32-cam",
     "traffic",
-    "machine-learning",
-    "roboflow",
-    "node-red"
+    "yolo",
+    "onnx",
+    "edge-ai",
+    "node.js",
+    "mqtt",
+    "socket.io",
+    "smart-city"
   ],
-  "author": "Jesin Milesh",
+  "author": "SmartJunction AI",
   "license": "MIT"
 }

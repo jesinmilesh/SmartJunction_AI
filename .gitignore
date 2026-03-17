@@ -36,25 +36,35 @@ yarn.lock
 secrets.h
 credentials.h
 
-# OS generated
-.DS_Store
-.DS_Store?
-._*
+# Node-RED local configs
+.config.nodes.json
+.config.runtime.json
+.config.runtime.json.backup
+
+# Large Binary Models
+*.onnx
+*.weights
+*.pt
+
+# Metadata & Thumbnails
 .Spotlight-V100
 .Trashes
 ehthumbs.db
 Thumbs.db
 desktop.ini
+.DS_Store
 
 # Editor / IDE
 .vscode/
 .idea/
+.project
+.settings/
 *.swp
 *.swo
 *~
 *.orig
 
-# Python (for any helper scripts)
+# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
