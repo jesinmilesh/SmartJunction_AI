@@ -1,456 +1,223 @@
 /*
  * ============================================================
- *  SmartJunction AI — esp32_brain.ino
- *  Board  : ESP32 Dev Module (AI Thinker or generic 38-pin)
- *  Role   : System brain — WiFi + MQTT + Motor + OLED +
- *           Roboflow vision API integration.
+ *  SmartJunction AI — esp32_brain.ino (Refactored)
+ *  Board  : AI Thinker ESP32-CAM
+ *  Role   : Smart Camera Node — WiFi + MQTT + Vision (Roboflow)
  *
- *  Pin Map:
- *    GPIO 16 (RX2) ← Mega TX1   (via 1kΩ/2kΩ voltage divider)
- *    GPIO 17 (TX2) → (unused / future use)
- *    GPIO 25       → RED   traffic LED (via 220Ω)
- *    GPIO 26       → GREEN traffic LED (via 220Ω)
- *    GPIO 27       → Buzzer (active buzzer or transistor)
- *    GPIO 14       → Servo signal wire
- *    GPIO 21 (SDA) → OLED SDA
- *    GPIO 22 (SCL) → OLED SCL
- *
- *  Libraries needed:
- *    - ArduinoJson    (v6.x)  — Benoit Blanchon
- *    - PubSubClient           — Nick O'Leary
- *    - ESP32Servo             — Kevin Harrington
- *    - Adafruit SSD1306
- *    - Adafruit GFX Library
+ *  Function:
+ *   - Hosts a live MJPEG stream for the Dashboard.
+ *   - Captures frames and sends them to Roboflow for AI detection.
+ *   - Publishes vision results (vehicles/persons) via MQTT.
  * ============================================================
  */
 
-#include <Arduino.h>
+#include "esp_camera.h"
+#include "esp_http_server.h"
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include <ESP32Servo.h>
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
 #include <HTTPClient.h>
 #include <base64.h>
 
 // ============================================================
-//  USER CONFIGURATION — fill in before flashing
+//  USER CONFIGURATION
 // ============================================================
 const char* WIFI_SSID      = "YOUR_WIFI_NAME";       // <-- change
 const char* WIFI_PASSWORD  = "YOUR_WIFI_PASSWORD";   // <-- change
-const char* MQTT_BROKER    = "192.168.1.100";         // laptop IP running Node-RED
+const char* MQTT_BROKER    = "192.168.1.100";         // laptop IP
 const int   MQTT_PORT      = 1883;
 
-// Roboflow credentials (Step 6 in the guide)
+// Roboflow credentials
 const char* RF_API_KEY     = "YOUR_ROBOFLOW_API_KEY"; // <-- change
-const char* RF_MODEL_ID    = "your-model-name/1";     // <-- change  e.g. "vehicle-detect/1"
-const char* CAM_STREAM_IP  = "192.168.1.105";          // <-- change to ESP32-CAM IP
+const char* RF_MODEL_ID    = "stars-ss3lr/projects/2";     // <-- Updated to your trained project
 // ============================================================
 
-// ---- Pin Definitions ----
-#define SERIAL2_RX    16
-#define SERIAL2_TX    17
-#define RED_LIGHT     25
-#define GREEN_LIGHT   26
-#define BUZZER_PIN    27
-#define SERVO_PIN     14
+// AI Thinker ESP32-CAM Pins
+#define PWDN_GPIO_NUM   32
+#define RESET_GPIO_NUM  -1
+#define XCLK_GPIO_NUM    0
+#define SIOD_GPIO_NUM   26
+#define SIOC_GPIO_NUM   27
+#define Y9_GPIO_NUM     35
+#define Y8_GPIO_NUM     34
+#define Y7_GPIO_NUM     39
+#define Y6_GPIO_NUM     36
+#define Y5_GPIO_NUM     21
+#define Y4_GPIO_NUM     19
+#define Y3_GPIO_NUM     18
+#define Y2_GPIO_NUM      5
+#define VSYNC_GPIO_NUM  25
+#define HREF_GPIO_NUM   23
+#define PCLK_GPIO_NUM   22
 
-// ---- OLED ----
-#define SCREEN_W 128
-#define SCREEN_H  64
-#define OLED_ADDR 0x3C
-Adafruit_SSD1306 display(SCREEN_W, SCREEN_H, &Wire, -1);
-
-// ---- Objects ----
-Servo        barrierServo;
-WiFiClient   wifiClient;
+WiFiClient wifiClient;
 PubSubClient mqtt(wifiClient);
 
-// ---- State Variables ----
-int  congestionScore  = 0;
-int  lastDist         = 999;
-bool pedestrianAlert  = false;
-bool emergencyMode    = false;
-int  lastVehicleCount = 0;
-int  lastPersonCount  = 0;
-
 // ────────────────────────────────────────────────────────────
-//  Hardware helpers
+//  Camera Setup
 // ────────────────────────────────────────────────────────────
+bool initCamera() {
+    camera_config_t config;
+    config.ledc_channel = LEDC_CHANNEL_0;
+    config.ledc_timer = LEDC_TIMER_0;
+    config.pin_d0 = Y2_GPIO_NUM;
+    config.pin_d1 = Y3_GPIO_NUM;
+    config.pin_d2 = Y4_GPIO_NUM;
+    config.pin_d3 = Y5_GPIO_NUM;
+    config.pin_d4 = Y6_GPIO_NUM;
+    config.pin_d5 = Y7_GPIO_NUM;
+    config.pin_d6 = Y8_GPIO_NUM;
+    config.pin_d7 = Y9_GPIO_NUM;
+    config.pin_xclk = XCLK_GPIO_NUM;
+    config.pin_pclk = PCLK_GPIO_NUM;
+    config.pin_vsync = VSYNC_GPIO_NUM;
+    config.pin_href = HREF_GPIO_NUM;
+    config.pin_sscb_sda = SIOD_GPIO_NUM;
+    config.pin_sscb_scl = SIOC_GPIO_NUM;
+    config.pin_pwdn = PWDN_GPIO_NUM;
+    config.pin_reset = RESET_GPIO_NUM;
+    config.xclk_freq_hz = 20000000;
+    config.pixel_format = PIXFORMAT_JPEG;
 
-void setSignal(bool greenOn) {
-  digitalWrite(GREEN_LIGHT, greenOn ? HIGH : LOW);
-  digitalWrite(RED_LIGHT,   greenOn ? LOW  : HIGH);
-}
-
-void dropBarrier()  { barrierServo.write(90); delay(300); }
-void raiseBarrier() { barrierServo.write(0);  delay(300); }
-
-void buzzerOn()  { digitalWrite(BUZZER_PIN, HIGH); }
-void buzzerOff() { digitalWrite(BUZZER_PIN, LOW);  }
-
-// ────────────────────────────────────────────────────────────
-//  OLED update
-// ────────────────────────────────────────────────────────────
-void updateOLED(int score, int dist, bool ped, int vehicles, int persons) {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-
-  // Header
-  display.setCursor(0, 0);
-  display.println(F("== SmartJunction AI =="));
-  display.drawLine(0, 9, 127, 9, SSD1306_WHITE);
-
-  // Sensor data
-  display.setCursor(0, 12);
-  display.print(F("Cong: ")); display.print(score); display.println(F("%"));
-
-  display.setCursor(0, 22);
-  display.print(F("Dist: "));
-  if (dist >= 999) display.println(F("---cm"));
-  else { display.print(dist); display.println(F("cm")); }
-
-  display.setCursor(0, 32);
-  display.print(F("Ped : ")); display.println(ped ? F("DETECTED!") : F("clear"));
-
-  // Vision
-  display.setCursor(0, 42);
-  display.print(F("Veh:")); display.print(vehicles);
-  display.print(F("  Per:")); display.println(persons);
-
-  // Mode indicator
-  display.setCursor(0, 54);
-  if (emergencyMode)    display.println(F("[!] EMERGENCY MODE"));
-  else if (ped)         display.println(F("[*] PEDESTRIAN HOLD"));
-  else if (score > 60)  display.println(F("    HIGH TRAFFIC"));
-  else                  display.println(F("    Normal"));
-
-  display.display();
-}
-
-// ────────────────────────────────────────────────────────────
-//  MQTT helpers
-// ────────────────────────────────────────────────────────────
-void publishSensors(int dist, int ir, int pir, int cong) {
-  StaticJsonDocument<128> doc;
-  doc["dist"] = dist;
-  doc["ir"]   = ir;
-  doc["pir"]  = pir;
-  doc["cong"] = cong;
-  char buf[128];
-  serializeJson(doc, buf);
-  mqtt.publish("smartjunction/sensors", buf);
-}
-
-void publishVision(int vehicles, int persons) {
-  StaticJsonDocument<128> doc;
-  doc["vehicles"] = vehicles;
-  doc["persons"]  = persons;
-  char buf[128];
-  serializeJson(doc, buf);
-  mqtt.publish("smartjunction/vision", buf);
-}
-
-void publishStatus(const char* mode) {
-  mqtt.publish("smartjunction/status", mode);
-}
-
-// ────────────────────────────────────────────────────────────
-//  MQTT incoming callback — remote override from Node-RED
-// ────────────────────────────────────────────────────────────
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String msg;
-  msg.reserve(length);
-  for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
-
-  Serial.print(F("[MQTT] topic="));
-  Serial.print(topic);
-  Serial.print(F(" msg="));
-  Serial.println(msg);
-
-  if (String(topic) == "smartjunction/override") {
-    if      (msg == "GREEN")     { setSignal(true);  raiseBarrier(); publishStatus("MANUAL_GREEN"); }
-    else if (msg == "RED")       { setSignal(false); dropBarrier();  publishStatus("MANUAL_RED");   }
-    else if (msg == "EMERGENCY") { emergencyMode = true;  publishStatus("EMERGENCY"); }
-    else if (msg == "CLEAR")     { emergencyMode = false; publishStatus("NORMAL");    }
-  }
-}
-
-// ────────────────────────────────────────────────────────────
-//  WiFi / MQTT connection
-// ────────────────────────────────────────────────────────────
-void connectWiFi() {
-  Serial.print(F("[WiFi] Connecting to "));
-  Serial.println(WIFI_SSID);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  unsigned long t = millis();
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print('.');
-    if (millis() - t > 20000) {          // 20-second timeout
-      Serial.println(F("\n[WiFi] timeout — continuing offline"));
-      return;
-    }
-  }
-  Serial.print(F("\n[WiFi] Connected. IP: "));
-  Serial.println(WiFi.localIP());
-}
-
-void connectMQTT() {
-  if (WiFi.status() != WL_CONNECTED) return;
-  int tries = 0;
-  while (!mqtt.connected() && tries < 3) {
-    Serial.print(F("[MQTT] Connecting..."));
-    if (mqtt.connect("ESP32-SmartJunction")) {
-      Serial.println(F(" OK"));
-      mqtt.subscribe("smartjunction/override");
+    if (psramFound()) {
+        config.frame_size = FRAMESIZE_VGA;
+        config.jpeg_quality = 10;
+        config.fb_count = 2;
     } else {
-      Serial.print(F(" failed rc="));
-      Serial.println(mqtt.state());
-      delay(2000);
-      tries++;
+        config.frame_size = FRAMESIZE_QVGA;
+        config.jpeg_quality = 12;
+        config.fb_count = 1;
     }
-  }
+
+    esp_err_t err = esp_camera_init(&config);
+    return (err == ESP_OK);
 }
 
 // ────────────────────────────────────────────────────────────
-//  Roboflow — grab a frame from ESP32-CAM and call the API
+//  HTTP Server Handlers
 // ────────────────────────────────────────────────────────────
-String callRoboflow() {
-  if (WiFi.status() != WL_CONNECTED) return "offline";
+static esp_err_t captureHandler(httpd_req_t* req) {
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) { httpd_resp_send_500(req); return ESP_FAIL; }
+    httpd_resp_set_type(req, "image/jpeg");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    esp_err_t res = httpd_resp_send(req, (const char*)fb->buf, fb->len);
+    esp_camera_fb_return(fb);
+    return res;
+}
 
-  // Step 1 — grab JPEG from ESP32-CAM /capture endpoint
-  String captureUrl = String("http://") + CAM_STREAM_IP + "/capture";
-  HTTPClient http;
-  http.begin(captureUrl);
-  http.setTimeout(5000);
-  int httpCode = http.GET();
+#define PART_BOUNDARY "123456789000000000000987654321"
+static const char* STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
+static const char* STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
+static const char* STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
 
-  if (httpCode != 200) {
-    Serial.print(F("[CAM] Failed to get frame, code="));
-    Serial.println(httpCode);
+static esp_err_t streamHandler(httpd_req_t* req) {
+    esp_err_t res = httpd_resp_set_type(req, STREAM_CONTENT_TYPE);
+    if (res != ESP_OK) return res;
+    char partBuf[128];
+    while (true) {
+        camera_fb_t* fb = esp_camera_fb_get();
+        if (!fb) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
+        res = httpd_resp_send_chunk(req, STREAM_BOUNDARY, strlen(STREAM_BOUNDARY));
+        if (res == ESP_OK) {
+            size_t hdrLen = snprintf(partBuf, sizeof(partBuf), STREAM_PART, fb->len);
+            res = httpd_resp_send_chunk(req, partBuf, hdrLen);
+        }
+        if (res == ESP_OK) res = httpd_resp_send_chunk(req, (const char*)fb->buf, fb->len);
+        esp_camera_fb_return(fb);
+        if (res != ESP_OK) break;
+        vTaskDelay(pdMS_TO_TICKS(40)); // ~25 FPS
+    }
+    return res;
+}
+
+void startCameraServer() {
+    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+    cfg.server_port = 80;
+    httpd_handle_t server = NULL;
+    if (httpd_start(&server, &cfg) == ESP_OK) {
+        httpd_uri_t captureUri = { "/capture", HTTP_GET, captureHandler, NULL };
+        httpd_uri_t streamUri  = { "/stream",  HTTP_GET, streamHandler,  NULL };
+        httpd_register_uri_handler(server, &captureUri);
+        httpd_register_uri_handler(server, &streamUri);
+        Serial.println(F("[HTTP] Server started on port 80"));
+    }
+}
+
+// ────────────────────────────────────────────────────────────
+//  Vision & Logic
+// ────────────────────────────────────────────────────────────
+void publishVision(int vehicles, int persons) {
+    StaticJsonDocument<128> doc;
+    doc["vehicles"] = vehicles;
+    doc["persons"]  = persons;
+    char buf[128];
+    serializeJson(doc, buf);
+    mqtt.publish("smartjunction/vision", buf);
+}
+
+void callRoboflow() {
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) return;
+
+    String b64 = base64::encode(fb->buf, fb->len);
+    esp_camera_fb_return(fb);
+
+    String rfUrl = String("https://detect.roboflow.com/") + RF_MODEL_ID + "?api_key=" + RF_API_KEY + "&name=frame.jpg";
+    HTTPClient http;
+    http.begin(rfUrl);
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+    http.setTimeout(10000);
+
+    int code = http.POST(b64);
+    if (code == 200) {
+        String res = http.getString();
+        StaticJsonDocument<1024> doc;
+        if (!deserializeJson(doc, res)) {
+            int v = 0, p = 0;
+            for (JsonObject pred : doc["predictions"].as<JsonArray>()) {
+                String cls = pred["class"].as<String>();
+                if (pred["confidence"].as<float>() > 0.5) {
+                    if (cls == "cars" || cls == "vehicle") v++; // Handle "cars" from the new model
+                    if (cls == "person") p++;
+                }
+            }
+            publishVision(v, p);
+            Serial.printf("[RF] Detected: %d vehicles, %d persons\n", v, p);
+        }
+    }
     http.end();
-    return "error";
-  }
-
-  int len = http.getSize();
-  if (len <= 0 || len > 50000) {   // guard against garbage sizes
-    http.end();
-    return "error";
-  }
-
-  uint8_t* imgBuf = (uint8_t*)malloc(len);
-  if (!imgBuf) { http.end(); return "error"; }
-
-  WiFiClient* stream = http.getStreamPtr();
-  stream->readBytes(imgBuf, len);
-  http.end();
-
-  // Step 2 — base64 encode
-  String b64 = base64::encode(imgBuf, len);
-  free(imgBuf);
-
-  // Step 3 — POST to Roboflow inference endpoint
-  String rfUrl = String("https://detect.roboflow.com/")
-               + RF_MODEL_ID
-               + "?api_key=" + RF_API_KEY
-               + "&name=frame.jpg";
-
-  HTTPClient rfHttp;
-  rfHttp.begin(rfUrl);
-  rfHttp.addHeader("Content-Type", "application/x-www-form-urlencoded");
-  rfHttp.setTimeout(10000);
-
-  int rfCode = rfHttp.POST(b64);
-  String result = "";
-  if (rfCode == 200) {
-    result = rfHttp.getString();
-    Serial.print(F("[RF] response: "));
-    Serial.println(result.substring(0, 120));   // print first 120 chars
-  } else {
-    Serial.print(F("[RF] HTTP error="));
-    Serial.println(rfCode);
-    result = "error";
-  }
-  rfHttp.end();
-  return result;
-}
-
-// Parse Roboflow JSON → act on detections
-void handleRoboflowResult(const String& json) {
-  if (json == "error" || json == "offline") return;
-
-  StaticJsonDocument<1024> doc;
-  DeserializationError err = deserializeJson(doc, json);
-  if (err) {
-    Serial.print(F("[RF] JSON parse error: "));
-    Serial.println(err.f_str());
-    return;
-  }
-
-  int vehicleCount = 0;
-  int personCount  = 0;
-
-  JsonArray preds = doc["predictions"].as<JsonArray>();
-  for (JsonObject p : preds) {
-    String cls = p["class"].as<String>();
-    float  conf = p["confidence"] | 0.0f;
-    if (conf > 0.5f) {
-      if (cls == "vehicle") vehicleCount++;
-      if (cls == "person")  personCount++;
-    }
-  }
-
-  lastVehicleCount = vehicleCount;
-  lastPersonCount  = personCount;
-
-  Serial.printf("[RF] Vehicles=%d  Persons=%d\n", vehicleCount, personCount);
-
-  // Publish vision results
-  publishVision(vehicleCount, personCount);
-
-  // Vision-based pedestrian override (only when not already in emergency)
-  if (!emergencyMode && personCount > 0) {
-    setSignal(false);
-    dropBarrier();
-    buzzerOn();
-    pedestrianAlert = true;
-  }
 }
 
 // ────────────────────────────────────────────────────────────
-//  Traffic signal decision engine
-// ────────────────────────────────────────────────────────────
-void runSignalLogic(int dist, bool ped, int cong) {
-  if (emergencyMode) {
-    // ── EMERGENCY: all-red, barrier down, buzzer on
-    setSignal(false);
-    dropBarrier();
-    buzzerOn();
-    publishStatus("EMERGENCY");
-    return;
-  }
-
-  if (ped) {
-    // ── PEDESTRIAN: red, barrier holds traffic, buzzer 3 s
-    setSignal(false);
-    dropBarrier();
-    buzzerOn();
-    publishStatus("PEDESTRIAN_HOLD");
-    delay(3000);
-    buzzerOff();
-    // After 3 sec safe gap, allow vehicles again if none are there
-    if (!pedestrianAlert) {
-      setSignal(true);
-      raiseBarrier();
-      publishStatus("NORMAL");
-    }
-    return;
-  }
-
-  if (dist > 0 && dist < 80) {
-    // ── VEHICLE APPROACHING: predictive green, open barrier
-    setSignal(true);
-    raiseBarrier();
-    buzzerOff();
-    publishStatus(cong > 60 ? "HIGH_TRAFFIC" : "VEHICLE_APPROACHING");
-    return;
-  }
-
-  // ── DEFAULT: green, open, quiet
-  setSignal(true);
-  raiseBarrier();
-  buzzerOff();
-  publishStatus("NORMAL");
-}
-
-// ────────────────────────────────────────────────────────────
-//  setup()
+//  Setup & Loop
 // ────────────────────────────────────────────────────────────
 void setup() {
-  Serial.begin(115200);
-  Serial2.begin(115200, SERIAL_8N1, SERIAL2_RX, SERIAL2_TX);
+    Serial.begin(115200);
+    if (!initCamera()) {
+        Serial.println(F("Camera init FAILED"));
+        while (1) delay(1000);
+    }
 
-  // Outputs
-  pinMode(RED_LIGHT,   OUTPUT);
-  pinMode(GREEN_LIGHT, OUTPUT);
-  pinMode(BUZZER_PIN,  OUTPUT);
-  setSignal(true);   // startup: green
-  buzzerOff();
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+    Serial.println(F("\nWiFi Connected"));
 
-  // Servo
-  barrierServo.attach(SERVO_PIN, 500, 2400);
-  raiseBarrier();
-
-  // OLED
-  Wire.begin();
-  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
-    Serial.println(F("[OLED] init FAILED — check wiring"));
-  }
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 0);
-  display.println(F("SmartJunction AI"));
-  display.println(F("  Initialising..."));
-  display.display();
-
-  // Network
-  connectWiFi();
-  mqtt.setServer(MQTT_BROKER, MQTT_PORT);
-  mqtt.setCallback(mqttCallback);
-  connectMQTT();
-
-  Serial.println(F("[ESP32] Setup complete."));
+    mqtt.setServer(MQTT_BROKER, MQTT_PORT);
+    startCameraServer();
 }
 
-// ────────────────────────────────────────────────────────────
-//  loop()
-// ────────────────────────────────────────────────────────────
 void loop() {
-  // Keep MQTT alive
-  if (WiFi.status() == WL_CONNECTED && !mqtt.connected()) connectMQTT();
-  if (mqtt.connected()) mqtt.loop();
-
-  // ── Read JSON from Arduino Mega via UART ──
-  if (Serial2.available()) {
-    String line = Serial2.readStringUntil('\n');
-    line.trim();
-
-    StaticJsonDocument<128> doc;
-    DeserializationError err = deserializeJson(doc, line);
-
-    if (!err) {
-      int dist = doc["dist"] | 999;
-      int ir   = doc["ir"]   | 0;
-      int pir  = doc["pir"]  | 0;
-      int cong = doc["cong"] | 0;
-
-      lastDist       = dist;
-      congestionScore = cong;
-      // Pedestrian = motion (PIR) OR object on crosswalk beam (IR)
-      pedestrianAlert = (pir == 1 || ir == 1);
-
-      runSignalLogic(dist, pedestrianAlert, cong);
-      updateOLED(cong, dist, pedestrianAlert, lastVehicleCount, lastPersonCount);
-      publishSensors(dist, ir, pir, cong);
-    } else {
-      Serial.print(F("[UART] JSON err: "));
-      Serial.println(err.f_str());
+    if (!mqtt.connected()) {
+        if (mqtt.connect("ESP32-SmartBrain")) {
+            Serial.println(F("MQTT Connected"));
+        }
     }
-  }
+    mqtt.loop();
 
-  // ── Roboflow vision call every 2 seconds ──
-  static unsigned long lastRFcall = 0;
-  if (millis() - lastRFcall > 2000) {
-    String rfResult = callRoboflow();
-    handleRoboflowResult(rfResult);
-    lastRFcall = millis();
-  }
-
-  delay(100);
+    static unsigned long lastRF = 0;
+    if (millis() - lastRF > 5000) { // Call every 5 seconds
+        callRoboflow();
+        lastRF = millis();
+    }
 }

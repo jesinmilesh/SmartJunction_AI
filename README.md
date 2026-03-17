@@ -30,7 +30,8 @@ An Arduino-based intelligent traffic junction controller that combines physical 
 | `mega_sensors/mega_sensors.ino` | Arduino Mega 2560 | Reads HC-SR04 + IR + PIR, streams JSON |
 | `esp32_brain/esp32_brain.ino` | ESP32 Dev Module | Brain: receives sensor data, runs decision logic, WiFi/MQTT, Roboflow, OLED |
 | `esp32cam_stream/esp32cam_stream.ino` | AI Thinker ESP32-CAM | MJPEG stream server + `/capture` endpoint |
-| `nodered_flow/smartjunction_flow.json` | Laptop (Node-RED) | Live dashboard: gauges, chart, camera, override buttons |
+| `nodered_flow/smartjunction_flow.json` | Laptop (Node-RED) | Internal logic & MQTT processing |
+| `frontend/` | Web Browser | **Primary Control Center**: Premium web interface |
 
 ---
 
@@ -174,7 +175,28 @@ In Node-RED: **☰ → Manage Palette → Install** → search `node-red-dashboa
 
 **☰ → Import** → paste the contents of `nodered_flow/smartjunction_flow.json` → Deploy.
 
-Dashboard lives at: [http://localhost:1880/ui](http://localhost:1880/ui)
+---
+
+## 🌐 Web Dashboard (Modern Interface)
+
+The project includes a premium, high-performance web dashboard located in the `frontend/` folder.
+
+### 🚀 Live Demo
+**[Live Deployment Site](https://jesinmilesh.github.io/SmartJunction_AI/)**
+*(Automatically deployed via GitHub Actions)*
+
+### How to Launch Locally
+From the root of the project, run:
+```bash
+npm run frontend
+```
+Then open [http://localhost:3000](http://localhost:3000) in your browser.
+
+**Features:**
+- **Solar-Neon UI**: Sleek dark mode with glassmorphism.
+- **Reactive Gauges**: Real-time traffic density and proximity visualization.
+- **AI Detections**: Live log of vehicles and pedestrians.
+- **Priority Overrides**: Send manual commands directly from the UI.
 
 ---
 

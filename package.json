@@ -4,6 +4,7 @@
   "description": "Smart Traffic Junction with Computer Vision and IoT Dashboard",
   "scripts": {
     "dashboard": "npm start --prefix nodered_flow",
+    "frontend": "npx -y serve ./frontend",
     "setup:arduino": "arduino-cli core install arduino:avr --config-file arduino_libs/arduino-cli.yaml",
     "libs:install": "arduino-cli lib install \"ArduinoJson\" \"PubSubClient\" \"ESP32Servo\" \"NewPing\" \"Adafruit SSD1306\" \"Adafruit GFX Library\" --config-file arduino_libs/arduino-cli.yaml"
   },
