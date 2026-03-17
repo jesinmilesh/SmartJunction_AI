@@ -1,21 +1,31 @@
 {
   "name": "smart-junction-ai",
-  "version": "2.0.0",
-  "description": "SmartJunction AI — Edge AI Traffic Control for 4 Junctions (Node.js Edition)",
+  "version": "2.1.0",
+  "description": "SmartJunction AI — 4-Junction Edge AI Traffic Monitoring for Urban Cities",
   "scripts": {
-    "start":          "npm start --prefix edge_ai_server",
+    "start": "npm start --prefix edge_ai_server",
+    "dev": "npm run dev --prefix edge_ai_server",
     "install:server": "npm install --prefix edge_ai_server",
     "download:model": "node edge_ai_server/download-model.js",
-    "nodered":        "npm start --prefix nodered_flow",
-    "libs:arduino":   "arduino-cli lib install \"ArduinoJson\" \"PubSubClient\" \"ESP32Servo\" \"NewPing\" \"Adafruit SSD1306\" \"Adafruit GFX Library\""
+    "frontend": "npx -y serve ./frontend",
+    "dashboard": "node edge_ai_server/server.js",
+    "libs:arduino": "arduino-cli lib install \"ArduinoJson\" \"PubSubClient\" \"ESP32Servo\" \"NewPing\" \"Adafruit SSD1306\" \"Adafruit GFX Library\""
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/jesinmilesh/SmartJunction_AI"
   },
   "keywords": [
-    "esp32", "esp32-cam", "traffic", "yolo", "onnx",
-    "edge-ai", "node.js", "mqtt", "socket.io"
+    "esp32",
+    "esp32-cam",
+    "traffic",
+    "yolo",
+    "onnx",
+    "edge-ai",
+    "node.js",
+    "mqtt",
+    "socket.io",
+    "smart-city"
   ],
   "author": "SmartJunction AI",
   "license": "MIT"

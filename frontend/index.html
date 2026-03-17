@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartJunction AI | Live Control Center</title>
+    <meta name="description" content="Intelligent traffic management system dashboard for SmartJunction AI.">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    
+    <!-- Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="glass-overlay"></div>
+    
+    <main class="app-container">
+        <!-- Header -->
+        <header class="main-header">
+            <div class="logo-area">
+                <div class="pulse-icon"></div>
+                <h1>SmartJunction <span class="accent">AI</span></h1>
+            </div>
+            <div class="system-status">
+                <span class="status-dot online"></span>
+                <span id="connection-status">SYSTEM ONLINE</span>
+            </div>
+        </header>
+
+        <section class="dashboard-grid">
+            <!-- Left Column: Camera Stream -->
+            <div class="grid-card stream-card">
+                <div class="card-header">
+                    <i data-lucide="video"></i>
+                    <h2>Live Vision Feed</h2>
+                    <span class="live-tag">LIVE</span>
+                </div>
+                <div class="video-container">
+                    <div class="camera-placeholder">
+                        <i data-lucide="camera-off"></i>
+                        <p>Awaiting ESP32-CAM Stream...</p>
+                        <small>Connect hardware to view real-time feed</small>
+                    </div>
+                    <!-- Actual stream would go here: <img src="http://192.168.1.105/stream" id="stream-src"> -->
+                </div>
+                <div class="stream-info">
+                    <div class="info-item">
+                        <span class="label">FPS</span>
+                        <span class="value" id="fps-val">30</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="label">RESOLUTION</span>
+                        <span class="value">VGA (640x480)</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column Top: Gauges -->
+            <div class="right-col">
+                <div class="grid-card gauge-card">
+                    <div class="card-header">
+                        <i data-lucide="activity"></i>
+                        <h2>Traffic Density</h2>
+                    </div>
+                    <div class="gauges-wrapper">
+                        <div class="gauge-box">
+                            <div class="circular-progress" id="congestion-gauge">
+                                <div class="inner-circle">
+                                    <span class="gauge-value" id="cong-val">0</span>
+                                    <span class="gauge-unit">%</span>
+                                </div>
+                            </div>
+                            <label>Congestion</label>
+                        </div>
+                        <div class="gauge-box">
+                            <div class="circular-progress" id="distance-gauge">
+                                <div class="inner-circle">
+                                    <span class="gauge-value" id="dist-val">--</span>
+                                    <span class="gauge-unit">cm</span>
+                                </div>
+                            </div>
+                            <label>Proximity</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Vision Detections -->
+                <div class="grid-card vision-stats">
+                    <div class="card-header">
+                        <i data-lucide="eye"></i>
+                        <h2>AI Object Detection</h2>
+                    </div>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <i data-lucide="car"></i>
+                            <div class="stat-content">
+                                <span class="stat-label">Vehicles</span>
+                                <span class="stat-number" id="veh-count">0</span>
+                            </div>
+                        </div>
+                        <div class="stat-item">
+                            <i data-lucide="user"></i>
+                            <div class="stat-content">
+                                <span class="stat-label">Pedestrians</span>
+                                <span class="stat-number" id="ped-count">0</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="detection-log" id="detection-log">
+                        <div class="log-entry">Scanning junction parameters...</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Bottom Row: Controls -->
+        <section class="controls-section">
+            <div class="grid-card controls-card">
+                <div class="card-header">
+                    <i data-lucide="sliders-horizontal"></i>
+                    <h2>Manual Override Command Center</h2>
+                </div>
+                <div class="button-group">
+                    <button class="control-btn btn-green" onclick="sendCommand('GREEN')">
+                        <i data-lucide="check-circle"></i>
+                        FORCE GREEN
+                    </button>
+                    <button class="control-btn btn-red" onclick="sendCommand('RED')">
+                        <i data-lucide="x-circle"></i>
+                        FORCE RED
+                    </button>
+                    <button class="control-btn btn-emergency" onclick="sendCommand('EMERGENCY')">
+                        <i data-lucide="alert-triangle"></i>
+                        EMERGENCY
+                    </button>
+                    <button class="control-btn btn-clear" onclick="sendCommand('CLEAR')">
+                        <i data-lucide="rotate-ccw"></i>
+                        RESET TO AUTO
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <footer class="app-footer">
+            <p>&copy; 2026 SmartJunction AI | Developed by <span class="author">Jesin Milesh</span></p>
+        </footer>
+    </main>
+
+    <script src="script.js"></script>
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>

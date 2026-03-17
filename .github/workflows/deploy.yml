@@ -1,0 +1,81 @@
+name: SmartJunction AI Deployment
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  arduino-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install Board Cores
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr
+
+          arduino-cli core update-index \
+            --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+
+          arduino-cli core install esp32:esp32 \
+            --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+
+      - name: Install Libraries
+        run: |
+          arduino-cli lib install "ArduinoJson"
+          arduino-cli lib install "PubSubClient"
+          arduino-cli lib install "ESP32Servo"
+          arduino-cli lib install "NewPing"
+          arduino-cli lib install "Adafruit BusIO"
+          arduino-cli lib install "Adafruit GFX Library"
+          arduino-cli lib install "Adafruit SSD1306"
+
+      - name: Compile Arduino Mega Sketch
+        run: |
+          arduino-cli compile \
+            --fqbn arduino:avr:mega \
+            mega_sensors/mega_sensors.ino
+
+      # BUG 1 FIXED: was esp32:esp32:esp32cam (CAM board) — brain needs esp32:esp32:esp32
+      # BUG 3 FIXED: added --additional-urls so the esp32 core is actually found
+      - name: Compile ESP32 Brain Sketch
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32 \
+            --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json \
+            esp32_brain/esp32_brain.ino
+
+      # Optional: also compile the CAM sketch separately if you have it
+      - name: Compile ESP32-CAM Sketch
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32cam \
+            --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json \
+            esp32cam_stream/esp32cam_stream.ino
+
+  web-deploy:
+    runs-on: ubuntu-latest
+    needs: arduino-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./frontend
+          force_orphan: true
