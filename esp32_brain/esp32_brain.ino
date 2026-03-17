@@ -22,14 +22,14 @@
 // ============================================================
 //  USER CONFIGURATION
 // ============================================================
-const char* WIFI_SSID      = "YOUR_WIFI_NAME";       // <-- change
-const char* WIFI_PASSWORD  = "YOUR_WIFI_PASSWORD";   // <-- change
+const char* WIFI_SSID      = "Jesin";       // <-- change
+const char* WIFI_PASSWORD  = "12345678@@";   // <-- change
 const char* MQTT_BROKER    = "192.168.1.100";         // laptop IP
 const int   MQTT_PORT      = 1883;
 
 // Roboflow credentials
 const char* RF_API_KEY     = "YOUR_ROBOFLOW_API_KEY"; // <-- change
-const char* RF_MODEL_ID    = "stars-ss3lr/projects/2";     // <-- Updated to your trained project
+const char* RF_MODEL_ID    = "smart-traffic-management-system-xedob/6"; // <-- Integrated STMS Dataset
 // ============================================================
 
 // AI Thinker ESP32-CAM Pins
@@ -57,6 +57,13 @@ PubSubClient mqtt(wifiClient);
 //  Camera Setup
 // ────────────────────────────────────────────────────────────
 bool initCamera() {
+    // Force reset/power-on if PWDN is used
+    pinMode(PWDN_GPIO_NUM, OUTPUT);
+    digitalWrite(PWDN_GPIO_NUM, HIGH); // Power OFF
+    delay(500);
+    digitalWrite(PWDN_GPIO_NUM, LOW);  // Power ON
+    delay(500);
+
     camera_config_t config;
     config.ledc_channel = LEDC_CHANNEL_0;
     config.ledc_timer = LEDC_TIMER_0;
@@ -76,7 +83,7 @@ bool initCamera() {
     config.pin_sscb_scl = SIOC_GPIO_NUM;
     config.pin_pwdn = PWDN_GPIO_NUM;
     config.pin_reset = RESET_GPIO_NUM;
-    config.xclk_freq_hz = 20000000;
+    config.xclk_freq_hz = 8000000;
     config.pixel_format = PIXFORMAT_JPEG;
 
     if (psramFound()) {
@@ -90,7 +97,23 @@ bool initCamera() {
     }
 
     esp_err_t err = esp_camera_init(&config);
-    return (err == ESP_OK);
+    if (err != ESP_OK) {
+        // Retry once after a short delay
+        vTaskDelay(pdMS_TO_TICKS(500));
+        err = esp_camera_init(&config);
+    }
+
+    if (err != ESP_OK) {
+        Serial.printf("[CAMERA] Init failed with error 0x%x\n", err);
+        return false;
+    }
+
+    sensor_t* s = esp_camera_sensor_get();
+    if(s->id.PID == OV3660_PID) {
+        s->set_framesize(s, FRAMESIZE_SVGA);
+        s->set_pixformat(s, PIXFORMAT_JPEG);
+    }
+    return true;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -177,13 +200,21 @@ void callRoboflow() {
             int v = 0, p = 0;
             for (JsonObject pred : doc["predictions"].as<JsonArray>()) {
                 String cls = pred["class"].as<String>();
-                if (pred["confidence"].as<float>() > 0.5) {
-                    if (cls == "cars" || cls == "vehicle") v++; // Handle "cars" from the new model
-                    if (cls == "person") p++;
+                float conf = pred["confidence"].as<float>();
+                if (conf > 0.5) {
+                    // Comprehensive STMS Class Mapping
+                    if (cls == "car" || cls == "cars" || cls == "bus" || cls == "truck" || 
+                        cls == "trailer" || cls == "motorcycle" || cls == "autorickshaw" ||
+                        cls == "vehicle") {
+                        v++;
+                    }
+                    if (cls == "person" || cls == "rider") {
+                        p++;
+                    }
                 }
             }
             publishVision(v, p);
-            Serial.printf("[RF] Detected: %d vehicles, %d persons\n", v, p);
+            Serial.printf("[RF] Detected: %d v, %d p\n", v, p);
         }
     }
     http.end();
@@ -194,8 +225,13 @@ void callRoboflow() {
 // ────────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
-    if (!initCamera()) {
-        Serial.println(F("Camera init FAILED"));
+    Serial.println(F("\n--- SmartJunction AI Board Starting ---"));
+
+    if (initCamera()) {
+        Serial.println(F("[CAMERA] Ready! Starting server..."));
+        startCameraServer();
+    } else {
+        Serial.println(F("[CAMERA] Critical failure. System halted."));
         while (1) delay(1000);
     }
 
@@ -204,7 +240,6 @@ void setup() {
     Serial.println(F("\nWiFi Connected"));
 
     mqtt.setServer(MQTT_BROKER, MQTT_PORT);
-    startCameraServer();
 }
 
 void loop() {

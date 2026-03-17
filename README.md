@@ -194,6 +194,7 @@ Then open [http://localhost:3000](http://localhost:3000) in your browser.
 
 **Features:**
 - **Solar-Neon UI**: Sleek dark mode with glassmorphism.
+- **Advanced STMS AI**: Integrated [Smart Traffic Management System](https://universe.roboflow.com/stms/smart-traffic-management-system-xedob) dataset for multi-class detection (Car, Bus, Truck, Motorcycle, Autorickshaw, Person).
 - **Reactive Gauges**: Real-time traffic density and proximity visualization.
 - **AI Detections**: Live log of vehicles and pedestrians.
 - **Priority Overrides**: Send manual commands directly from the UI.
