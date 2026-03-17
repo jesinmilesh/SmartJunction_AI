@@ -6,8 +6,8 @@ on:
   pull_request:
     branches: [ main ]
 
-permissions:
-  contents: write
+# NOTE: For this to work, you MUST go to your Repo Settings -> Actions -> General
+# and set "Workflow permissions" to "Read and write permissions".
 
 jobs:
   # 1. Compile Arduino Sketches (CI)
@@ -48,6 +48,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: arduino-build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
