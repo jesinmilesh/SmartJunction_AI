@@ -1,0 +1,64 @@
+# ──────────────────────────────────────────────
+#  SmartJunction AI — .gitignore
+# ──────────────────────────────────────────────
+
+# Arduino IDE build output
+build/
+*.bin
+*.elf
+*.map
+*.hex
+*.uf2
+cache/
+.arduino15/
+
+# Arduino IDE temp files
+*.bak
+sketch.yaml
+
+# Node-RED user data & secrets
+.node-red/
+node_modules/
+**/node_modules/
+nodered_flow/.node-red/
+arduino_libs/
+
+# npm / Node
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Environment & secrets — NEVER commit credentials
+.env
+.env.*
+secrets.h
+credentials.h
+
+# OS generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.orig
+
+# Python (for any helper scripts)
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Logs
+logs/
+*.log

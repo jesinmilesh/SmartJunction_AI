@@ -1,0 +1,20 @@
+{
+  "name": "smartjunction-nodered",
+  "version": "1.0.0",
+  "description": "Node-RED dashboard dependencies for SmartJunction AI",
+  "private": true,
+  "scripts": {
+    "start": "node-red -u . -p 1880",
+    "install-palette": "npm install --prefix ~/.node-red node-red-dashboard"
+  },
+  "node-red": {
+    "version": ">=3.0.0"
+  },
+  "dependencies": {
+    "node-red": "^4.0.0",
+    "node-red-dashboard": "^3.6.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

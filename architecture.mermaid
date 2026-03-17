@@ -1,0 +1,45 @@
+graph TD
+    subgraph Sensors
+        US[HC-SR04 Ultrasonic]
+        IR[IR Proximity]
+        PIR[PIR Motion]
+    end
+
+    subgraph Hardware_Nodes
+        Mega[Arduino Mega 2560 - Sensor Hub]
+        ESP32[ESP32 Dev Module - Main Brain]
+        CAM[ESP32-CAM - Vision Stream]
+    end
+
+    subgraph Actuators
+        SRV[SG90 Servo Barrier]
+        LED[Signal LEDs R/G]
+        BUZ[Active Buzzer]
+        OLED[0.96 OLED Display]
+    end
+
+    subgraph Cloud_Local
+        RF[Roboflow Vision API]
+        NR[Node-RED Dashboard]
+        MQTT[Mosquitto Broker]
+    end
+
+    US --> Mega
+    IR --> Mega
+    PIR --> Mega
+
+    Mega -- "UART JSON (5Hz)" --> ESP32
+    
+    ESP32 --> SRV
+    ESP32 --> LED
+    ESP32 --> BUZ
+    ESP32 --> OLED
+
+    CAM -- "MJPEG Stream" --> NR
+    CAM -- "JPEG frame" --> RF
+    RF -- "JSON Inference" --> ESP32
+
+    ESP32 -- "MQTT (Sensors/Vision/Status)" --> MQTT
+    MQTT -- "MQTT (Gauges/Charts)" --> NR
+    NR -- "MQTT (Override Buttons)" --> MQTT
+    MQTT --> ESP32

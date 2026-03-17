@@ -1,0 +1,385 @@
+[
+  {
+    "id": "broker-local",
+    "type": "mqtt-broker",
+    "name": "Local MQTT (Mosquitto)",
+    "broker": "localhost",
+    "port": "1883",
+    "clientid": "node-red-smartjunction",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true
+  },
+
+  {
+    "id": "mqtt-in-sensors",
+    "type": "mqtt in",
+    "name": "MQTT: sensors",
+    "topic": "smartjunction/sensors",
+    "qos": "0",
+    "datatype": "utf8",
+    "broker": "broker-local",
+    "wires": [["json-sensors"]]
+  },
+  {
+    "id": "json-sensors",
+    "type": "json",
+    "name": "Parse Sensor JSON",
+    "property": "payload",
+    "action": "",
+    "pretty": false,
+    "wires": [["fn-split-sensors"]]
+  },
+  {
+    "id": "fn-split-sensors",
+    "type": "function",
+    "name": "Split sensor fields",
+    "func": "var p = msg.payload;\nvar msgs = [\n  { topic:'cong',  payload: p.cong || 0 },\n  { topic:'dist',  payload: p.dist || 0 },\n  { topic:'ir',    payload: p.ir   || 0 },\n  { topic:'pir',   payload: p.pir  || 0 }\n];\nreturn [msgs[0], msgs[1], msgs[2], msgs[3]];",
+    "outputs": 4,
+    "wires": [
+      ["gauge-cong", "chart-cong"],
+      ["gauge-dist"],
+      ["text-ir"],
+      ["text-pir"]
+    ]
+  },
+
+  {
+    "id": "mqtt-in-vision",
+    "type": "mqtt in",
+    "name": "MQTT: vision",
+    "topic": "smartjunction/vision",
+    "qos": "0",
+    "datatype": "utf8",
+    "broker": "broker-local",
+    "wires": [["json-vision"]]
+  },
+  {
+    "id": "json-vision",
+    "type": "json",
+    "name": "Parse Vision JSON",
+    "property": "payload",
+    "action": "",
+    "pretty": false,
+    "wires": [["fn-split-vision"]]
+  },
+  {
+    "id": "fn-split-vision",
+    "type": "function",
+    "name": "Split vision fields",
+    "func": "var p = msg.payload;\nreturn [\n  { payload: p.vehicles || 0 },\n  { payload: p.persons  || 0 }\n];",
+    "outputs": 2,
+    "wires": [
+      ["text-vehicles"],
+      ["text-persons"]
+    ]
+  },
+
+  {
+    "id": "mqtt-in-status",
+    "type": "mqtt in",
+    "name": "MQTT: status",
+    "topic": "smartjunction/status",
+    "qos": "0",
+    "datatype": "utf8",
+    "broker": "broker-local",
+    "wires": [["text-status"]]
+  },
+
+  {
+    "id": "tab-dashboard",
+    "type": "ui_tab",
+    "name": "SmartJunction AI",
+    "icon": "traffic",
+    "disabled": false,
+    "hidden": false
+  },
+  {
+    "id": "group-sensors",
+    "type": "ui_group",
+    "name": "Sensor Data",
+    "tab": "tab-dashboard",
+    "order": 1,
+    "disp": true,
+    "width": "6",
+    "collapse": false
+  },
+  {
+    "id": "group-vision",
+    "type": "ui_group",
+    "name": "Vision (Roboflow)",
+    "tab": "tab-dashboard",
+    "order": 2,
+    "disp": true,
+    "width": "6",
+    "collapse": false
+  },
+  {
+    "id": "group-controls",
+    "type": "ui_group",
+    "name": "Remote Override",
+    "tab": "tab-dashboard",
+    "order": 3,
+    "disp": true,
+    "width": "12",
+    "collapse": false
+  },
+  {
+    "id": "group-camera",
+    "type": "ui_group",
+    "name": "Live Camera",
+    "tab": "tab-dashboard",
+    "order": 4,
+    "disp": true,
+    "width": "12",
+    "collapse": false
+  },
+
+  {
+    "id": "gauge-cong",
+    "type": "ui_gauge",
+    "name": "Congestion Score",
+    "group": "group-sensors",
+    "order": 1,
+    "width": "3",
+    "height": "3",
+    "gtype": "gage",
+    "title": "Congestion",
+    "label": "%",
+    "format": "{{value}}",
+    "min": "0",
+    "max": "100",
+    "colors": ["#00b400","#e6e600","#ca3838"],
+    "seg1": "30",
+    "seg2": "70",
+    "wires": []
+  },
+  {
+    "id": "gauge-dist",
+    "type": "ui_gauge",
+    "name": "Distance",
+    "group": "group-sensors",
+    "order": 2,
+    "width": "3",
+    "height": "3",
+    "gtype": "gage",
+    "title": "Distance",
+    "label": "cm",
+    "format": "{{value}}",
+    "min": "0",
+    "max": "200",
+    "colors": ["#ca3838","#e6e600","#00b400"],
+    "seg1": "50",
+    "seg2": "100",
+    "wires": []
+  },
+  {
+    "id": "chart-cong",
+    "type": "ui_chart",
+    "name": "Congestion History",
+    "group": "group-sensors",
+    "order": 3,
+    "width": "6",
+    "height": "4",
+    "label": "Congestion Over Time",
+    "chartType": "line",
+    "legend": "false",
+    "xformat": "HH:mm:ss",
+    "interpolate": "bezier",
+    "nodata": "Waiting for data...",
+    "ymin": "0",
+    "ymax": "100",
+    "removeOlder": "5",
+    "removeOlderPoints": "",
+    "removeOlderUnit": "60",
+    "colors": ["#1f77b4"],
+    "wires": []
+  },
+  {
+    "id": "text-ir",
+    "type": "ui_text",
+    "name": "IR Sensor",
+    "group": "group-sensors",
+    "order": 4,
+    "width": "3",
+    "height": "1",
+    "label": "IR Crosswalk",
+    "format": "{{msg.payload == 1 ? '🔴 BLOCKED' : '🟢 Clear'}}",
+    "layout": "row-spread",
+    "wires": []
+  },
+  {
+    "id": "text-pir",
+    "type": "ui_text",
+    "name": "PIR Motion",
+    "group": "group-sensors",
+    "order": 5,
+    "width": "3",
+    "height": "1",
+    "label": "PIR Motion",
+    "format": "{{msg.payload == 1 ? '🚶 MOTION!' : '✅ Still'}}",
+    "layout": "row-spread",
+    "wires": []
+  },
+
+  {
+    "id": "text-vehicles",
+    "type": "ui_text",
+    "name": "Vehicles",
+    "group": "group-vision",
+    "order": 1,
+    "width": "3",
+    "height": "1",
+    "label": "Vehicles detected",
+    "format": "🚗 {{msg.payload}}",
+    "layout": "row-spread",
+    "wires": []
+  },
+  {
+    "id": "text-persons",
+    "type": "ui_text",
+    "name": "Persons",
+    "group": "group-vision",
+    "order": 2,
+    "width": "3",
+    "height": "1",
+    "label": "Persons detected",
+    "format": "🚶 {{msg.payload}}",
+    "layout": "row-spread",
+    "wires": []
+  },
+  {
+    "id": "text-status",
+    "type": "ui_text",
+    "name": "Junction Status",
+    "group": "group-vision",
+    "order": 3,
+    "width": "6",
+    "height": "1",
+    "label": "Junction Status",
+    "format": "<b>{{msg.payload}}</b>",
+    "layout": "row-spread",
+    "wires": []
+  },
+
+  {
+    "id": "btn-green",
+    "type": "ui_button",
+    "name": "Force GREEN",
+    "group": "group-controls",
+    "order": 1,
+    "width": "3",
+    "height": "1",
+    "passthru": false,
+    "label": "🟢 Force GREEN",
+    "tooltip": "Override signal to GREEN",
+    "color": "",
+    "bgcolor": "#1a7a1a",
+    "wires": [["fn-override-green"]]
+  },
+  {
+    "id": "fn-override-green",
+    "type": "function",
+    "name": "Set GREEN msg",
+    "func": "msg.payload = 'GREEN';\nmsg.topic = 'smartjunction/override';\nreturn msg;",
+    "outputs": 1,
+    "wires": [["mqtt-override-out"]]
+  },
+  {
+    "id": "btn-red",
+    "type": "ui_button",
+    "name": "Force RED",
+    "group": "group-controls",
+    "order": 2,
+    "width": "3",
+    "height": "1",
+    "passthru": false,
+    "label": "🔴 Force RED",
+    "tooltip": "Override signal to RED",
+    "color": "",
+    "bgcolor": "#7a1a1a",
+    "wires": [["fn-override-red"]]
+  },
+  {
+    "id": "fn-override-red",
+    "type": "function",
+    "name": "Set RED msg",
+    "func": "msg.payload = 'RED';\nmsg.topic = 'smartjunction/override';\nreturn msg;",
+    "outputs": 1,
+    "wires": [["mqtt-override-out"]]
+  },
+  {
+    "id": "btn-emergency",
+    "type": "ui_button",
+    "name": "EMERGENCY",
+    "group": "group-controls",
+    "order": 3,
+    "width": "3",
+    "height": "1",
+    "passthru": false,
+    "label": "🚨 EMERGENCY",
+    "tooltip": "Activate emergency mode (all red + buzzer)",
+    "color": "white",
+    "bgcolor": "#b30000",
+    "wires": [["fn-override-emergency"]]
+  },
+  {
+    "id": "fn-override-emergency",
+    "type": "function",
+    "name": "Set EMERGENCY msg",
+    "func": "msg.payload = 'EMERGENCY';\nmsg.topic = 'smartjunction/override';\nreturn msg;",
+    "outputs": 1,
+    "wires": [["mqtt-override-out"]]
+  },
+  {
+    "id": "btn-clear",
+    "type": "ui_button",
+    "name": "CLEAR Override",
+    "group": "group-controls",
+    "order": 4,
+    "width": "3",
+    "height": "1",
+    "passthru": false,
+    "label": "✅ CLEAR Override",
+    "tooltip": "Return to automatic mode",
+    "color": "",
+    "bgcolor": "#15527a",
+    "wires": [["fn-override-clear"]]
+  },
+  {
+    "id": "fn-override-clear",
+    "type": "function",
+    "name": "Set CLEAR msg",
+    "func": "msg.payload = 'CLEAR';\nmsg.topic = 'smartjunction/override';\nreturn msg;",
+    "outputs": 1,
+    "wires": [["mqtt-override-out"]]
+  },
+  {
+    "id": "mqtt-override-out",
+    "type": "mqtt out",
+    "name": "MQTT: override out",
+    "topic": "",
+    "qos": "0",
+    "retain": "false",
+    "broker": "broker-local",
+    "wires": []
+  },
+
+  {
+    "id": "template-camera",
+    "type": "ui_template",
+    "name": "Camera Embed",
+    "group": "group-camera",
+    "order": 1,
+    "width": "12",
+    "height": "8",
+    "format": "<div style='text-align:center;'>\n  <p style='color:#aaa;font-size:12px;'>Replace the IP below with your ESP32-CAM IP</p>\n  <img src='http://192.168.1.105/stream'\n       style='max-width:100%;border:2px solid #333;border-radius:8px;'\n       onerror=\"this.src='';this.alt='Camera offline — check IP & connection'\" />\n</div>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": true,
+    "templateScope": "local",
+    "wires": [[]]
+  }
+]
