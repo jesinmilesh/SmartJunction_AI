@@ -97,6 +97,18 @@ body::after {
 }
 
 .header-controls { display: flex; align-items: center; gap: 2.5rem; }
+.system-status { display: flex; align-items: center; gap: 1.5rem; }
+.webcam-controls { display: flex; align-items: center; gap: 0.5rem; }
+.connection-hub { display: flex; align-items: center; gap: 0.8rem; }
+
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.status-dot.online { background: var(--emerald-glow); box-shadow: 0 0 10px var(--emerald-glow); animation: glow-pulse 2s infinite; }
+.status-dot.offline { background: var(--ruby-glow); }
+
+@keyframes glow-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.9); }
+}
 
 .selector-hud {
     background: var(--bg-surface);
@@ -136,13 +148,22 @@ body::after {
     background: transparent;
     border: 1px solid var(--border-accent);
     color: var(--text-high);
-    font-size: 0.72rem; font-weight: 900;
+    font-size: 0.72rem; font-weight: 800;
     text-transform: uppercase; letter-spacing: 0.12em;
-    cursor: pointer; transition: all 0.4s cubic-bezier(0.19, 1, 0.22, 1);
-    position: relative; overflow: hidden;
+    cursor: pointer; transition: all 0.3s cubic-bezier(0.19, 1, 0.22, 1);
+    display: flex; align-items: center; gap: 0.75rem;
+    border-radius: 4px;
 }
 
-.hud-btn:hover { background: var(--cyan-dim); transform: translateY(-3px); border-color: var(--cyan-glow); color: var(--cyan-glow); box-shadow: 0 0 20px var(--cyan-dim); }
+.hud-btn i, .hud-btn svg { width: 14px; height: 14px; }
+
+.hud-btn:hover { background: var(--cyan-dim); transform: translateY(-2px); border-color: var(--cyan-glow); color: var(--cyan-glow); box-shadow: 0 0 15px var(--cyan-dim); }
+
+.btn-g:hover { border-color: var(--emerald-glow); color: var(--emerald-glow); background: rgba(16, 185, 129, 0.1); }
+.btn-r:hover { border-color: var(--ruby-glow); color: var(--ruby-glow); background: rgba(239, 68, 68, 0.1); }
+.btn-a:hover { border-color: var(--gold-glow); color: var(--gold-glow); background: rgba(245, 158, 11, 0.1); }
+.btn-em { border-color: rgba(239, 68, 68, 0.5); color: #ef4444; }
+.btn-em:hover { border-color: var(--ruby-glow); background: var(--ruby-glow); color: white; box-shadow: 0 0 25px var(--ruby-glow); }
 
 /* Main Dashboard Grid */
 .main-viewport {
@@ -167,6 +188,28 @@ body::after {
 }
 .video-frame::before { top: 15px; left: 15px; border-top: 3px solid var(--cyan-glow); border-left: 3px solid var(--cyan-glow); }
 .video-frame::after { bottom: 15px; right: 15px; border-bottom: 3px solid var(--cyan-glow); border-right: 3px solid var(--cyan-glow); }
+
+.scanline {
+    position: absolute; top: 0; left: 0; width: 100%; height: 2px;
+    background: rgba(6, 182, 212, 0.4);
+    box-shadow: 0 0 10px var(--cyan-glow);
+    z-index: 22; pointer-events: none;
+    animation: scanmove 4s linear infinite;
+}
+
+.grid-overlay {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    background-image: 
+        linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: 30px 30px;
+    z-index: 21; pointer-events: none;
+}
+
+@keyframes scanmove {
+    0% { top: -2px; }
+    100% { top: 100%; }
+}
 
 .main-stream-img { width: 100%; height: 100%; object-fit: contain; }
 
@@ -288,6 +331,23 @@ body.emergency-active .emergency-hud { opacity: 1; animation: hud-danger 1.5s in
 @keyframes fadeInDown { from { opacity: 0; transform: translateY(-30px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* Side Monitor Hub */
+.mobile-monitor-card {
+    margin-top: auto; cursor: pointer; border-style: dashed; border-color: rgba(6, 182, 212, 0.4);
+}
+.mobile-monitor-card:hover { border-style: solid; background: rgba(6, 182, 212, 0.1); }
+
+.mini-stream-box {
+    width: 100%; height: 120px; background: #000; border-radius: 4px; overflow: hidden;
+    position: relative; display: flex; align-items: center; justify-content: center;
+}
+.mini-stream { width: 100%; height: 100%; object-fit: cover; }
+.mini-error {
+    display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+    color: var(--text-low); font-size: 0.65rem;
+}
+.mini-error i { width: 20px; height: 20px; opacity: 0.5; }
 
 .hidden { display: none !important; }
 

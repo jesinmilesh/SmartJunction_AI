@@ -78,6 +78,7 @@ bool violationDetected = false;
 const char* topicStatus = "smartjunction/J1/status";
 const char* topicSensors = "smartjunction/J1/sensors";
 const char* topicCmd = "smartjunction/J1/cmd";
+const char* topicVision = "smartjunction/J1/vision"; // AI data from Server
 const char* topicEmergency = "smartjunction/emergency";
 const char* topicAlerts = "smartjunction/alerts";
 
@@ -170,56 +171,7 @@ void updateOLED() {
     display.display();
 }
 
-// ────────────────────────────────────────────────────────────
-//  Vision Intelligence (Pull Architecture)
-// ────────────────────────────────────────────────────────────
-void callRoboflow() {
-    if (WiFi.status() != WL_CONNECTED) return;
-    
-    HTTPClient http;
-    String captureUrl = "http://" + String(CAM_IP) + "/capture";
-    http.begin(captureUrl);
-    http.setTimeout(3000);
-    int httpCode = http.GET();
-    
-    if (httpCode == 200) {
-        size_t len = http.getSize();
-        WiFiClient* stream = http.getStreamPtr();
-        uint8_t* buffer = (uint8_t*)malloc(len);
-        if (buffer) {
-            stream->readBytes(buffer, len);
-            String b64 = base64::encode(buffer, len);
-            free(buffer);
-            http.end();
-
-            String rfUrl = String("https://detect.roboflow.com/") + RF_MODEL_ID + "?api_key=" + RF_API_KEY + "&name=frame.jpg";
-            http.begin(rfUrl);
-            http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-            int rfCode = http.POST(b64);
-            
-            if (rfCode == 200) {
-                String res = http.getString();
-                StaticJsonDocument<2048> doc;
-                if (!deserializeJson(doc, res)) {
-                    int v = 0; 
-                    String emType = "";
-                    for (JsonObject pred : doc["predictions"].as<JsonArray>()) {
-                        String cls = pred["class"].as<String>();
-                        float conf = pred["confidence"].as<float>();
-                        if (conf > 0.45) {
-                            if (cls == "car" || cls == "bus" || cls == "truck" || cls == "vehicle") v++;
-                            if (cls == "ambulance") emType = "AMBULANCE";
-                            if (cls == "fire truck" || cls == "fire brigade") emType = "FIRE_TRUCK";
-                        }
-                    }
-                    vehicleCount = v;
-                    if (emType != "") forceEmergency(emType);
-                }
-            }
-        }
-    }
-    http.end();
-}
+// Vision Intelligence handled by Edge Server via MQTT for maximum speed
 
 // ────────────────────────────────────────────────────────────
 //  Logic & Networking
@@ -235,7 +187,18 @@ void handleMqttCallback(char* topic, byte* payload, unsigned int length) {
         } else if (msg == "AUTO") {
             manualOverride = false;
         } else if (msg == "ALERT_PATROL") {
-            violationDetected = true; // Use flags to trigger visual warning
+            violationDetected = true; 
+        }
+    } else if (String(topic) == topicVision) {
+        // High-speed Vision data from Edge Server
+        StaticJsonDocument<512> doc;
+        if (!deserializeJson(doc, msg)) {
+            vehicleCount = doc["vehicles"] | 0;
+            personCount  = doc["persons"] | 0;
+            megaCong     = doc["traffic_score"] | 0;
+            
+            if (doc["ambulance"]) forceEmergency("AMBULANCE");
+            if (doc["fire_truck"]) forceEmergency("FIRE_TRUCK");
         }
     } else if (String(topic) == topicEmergency && msg.indexOf("CLEAR") != -1) {
         emergencyActive = false;
@@ -323,6 +286,7 @@ void loop() {
     if (!mqtt.connected()) {
         if (mqtt.connect(String("Brain-" + String(JUNCTION_ID)).c_str())) {
             mqtt.subscribe(topicCmd);
+            mqtt.subscribe(topicVision);
             mqtt.subscribe(topicEmergency);
             mqtt.publish(topicStatus, "online");
         }
@@ -331,34 +295,40 @@ void loop() {
 
     readMegaSensors();
 
-    // Signal Logic (Adaptive Cycle)
+    // Signal Logic (Neural-Adaptive Pulse)
     if (!manualOverride && !emergencyActive) {
         static unsigned long lastCycle = 0;
         unsigned long greenTime = 8000;
         unsigned long redTime   = 8000;
         
-        // AI Weighting: Increase green duration if high congestion
-        if (megaCong > 60) greenTime = 15000;
-        if (megaCong > 85) greenTime = 25000;
+        // --- AI Congestion Analysis ---
+        // We use the higher value from either physical ultrasonic sensors or AI camera feed
+        int currentCong = (vehicleCount * 10 > megaCong) ? (vehicleCount * 10) : megaCong;
+
+        // 🟢 Green Duration Logic: Extend if AI sees many vehicles
+        if (currentCong > 50) greenTime = 15000;
+        if (currentCong > 85) greenTime = 30000; // Extra long green for congestion clearance
         
-        // Pedestrian Hold: If PIR active, don't switch from GREEN to YELLOW yet
-        bool pedWait = (signalState == "GREEN" && (megaPIR || megaIR));
+        // 🔴 Red Acceleration Logic: Switch to green faster if queue is large
+        if (currentCong > 70 && signalState == "RED") {
+            redTime = 3000; // Force-clear red lane after only 3s if jammed
+        }
+
+        // Pedestrian Hold Protocol
+        bool pedWait = (signalState == "GREEN" && (megaPIR || megaIR || personCount > 0));
 
         if (millis() - lastCycle > (signalState == "GREEN" ? greenTime : redTime) && !pedWait) {
-            if (signalState == "RED") setSignal("GREEN");
+            if (signalState == "RED") {
+                setSignal("GREEN");
+                Serial.println("[AI] Queue detected — Switching to GREEN");
+            }
             else if (signalState == "GREEN") setSignal("YELLOW");
             else if (signalState == "YELLOW") setSignal("RED");
             lastCycle = millis();
         }
     }
 
-    // Vision Analysis (Smart Throttle)
-    static unsigned long lastAI = 0;
-    int aiInterval = emergencyActive ? 2000 : 6000; 
-    if (millis() - lastAI > aiInterval) {
-        callRoboflow();
-        lastAI = millis();
-    }
+    // Vision Analysis handled via MQTT (Server-Driven)
 
     // Clear violation after some time
     if (violationDetected && (millis() - lastSignalChange > 15000)) {

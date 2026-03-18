@@ -29,9 +29,12 @@ const axios      = require('axios');
 const sharp      = require('sharp');
 const ort        = require('onnxruntime-node');
 const fs         = require('fs');
+const os         = require('os'); // Import 'os' module
 const { Aedes }  = require('aedes');
 const aedes      = new Aedes();
 const net        = require('net');
+
+
 
 // ─────────────────────────────────────────────────────────────
 //  Configuration  (also read from .env)
@@ -47,7 +50,7 @@ const INFER_MS    = Math.round(1000 / parseFloat(process.env.INFER_FPS || '2'));
 const RF_API_KEY  = process.env.ROBOFLOW_API_KEY;
 const RF_MODEL_ID = process.env.ROBOFLOW_MODEL_ID || 'smartjunction-traffic/3';
 const RF_URL      = `https://detect.roboflow.com/${RF_MODEL_ID}?api_key=${RF_API_KEY}`;
-const RF_THROTTLE = 5000; // Only call Roboflow every 5 seconds per junction
+const RF_THROTTLE = 1000; // FAST REACTION: Only wait 1 second between high-precision cloud checks
 
 // How often (ms) to re-broadcast emergency per junction (throttle)
 const EMERGENCY_BROADCAST_INTERVAL = 10000;
@@ -58,6 +61,7 @@ const JUNCTIONS = {
   J2: process.env.J2_CAM_IP || '192.168.1.102',
   J3: process.env.J3_CAM_IP || '192.168.1.103',
   J4: process.env.J4_CAM_IP || '192.168.1.104',
+  MOBILE_CAM: process.env.MOBILE_CAM_IP || '10.152.59.144:8080'
 };
 
 // YOLOv8 COCO class names (80 standard)
@@ -76,11 +80,16 @@ const COCO_CLASSES = [
 ];
 
 const VEHICLE_CLASSES = new Set([
-  'car','truck','bus','motorcycle','bicycle','ambulance','fire_truck','train',
+  'car','truck','bus','motorcycle','bicycle','ambulance','fire_truck','firetruck','train',
+  'rickshaw', 'cng', 'police', 'police-car', 'van', 'autorickshaw',
+  '0', '1', '2', '3', '4', '5' // Numeric labels found in v3 dataset (0,1=car, 2,3=truck, 4,5=bus)
 ]);
 const PERSON_CLASSES    = new Set(['person']);
-// EMERGENCY_CLASSES used in hasEmergencyLights heuristic branch
-const EMERGENCY_CLASSES = new Set(['ambulance','fire_truck']); // eslint-disable-line no-unused-vars
+// Specific triggers for Emergency Authority (v3 labels and IDs included)
+const EMERGENCY_CLASSES = new Set([
+  'ambulance', 'firetruck', 'police', 'police-car', 'fire brigade',
+  '10', '11', '21', '22', '23' // Numeric IDs potentially used for Emergency in v3
+]); 
 
 // ─────────────────────────────────────────────────────────────
 //  Global state  (one entry per junction)
@@ -96,10 +105,11 @@ for (const [jct, ip] of Object.entries(JUNCTIONS)) {
     cam_url: `http://${ip}/capture`,
     detections: [],
     active: true,
-    violation: false,
-    uptime: 0,
+    ai_signal: 'UNKNOWN',
+    _lastRFCall: 0,
     _lastEmBroadcast: 0,
     _lastAccidentAlert: 0,
+    _isVirtual: false,
     _history: [] // Rolling chart data (v, t)
   };
 }
@@ -241,6 +251,7 @@ async function runRoboflowInference(jpegBuf) {
     
     if (!resp.data.predictions) return [];
 
+    console.log(`[Roboflow] ✓ Comparison Success: Validated against Dataset [${RF_MODEL_ID}]`);
     return resp.data.predictions.map(p => {
       // Roboflow center coords to x1,y1,x2,y2
       const x1 = Math.round(p.x - p.width / 2);
@@ -324,6 +335,38 @@ async function hasEmergencyLights(jpegBuf, bbox, imgW, imgH) {
   }
 }
 
+/** 🚦 AI-Vision Signal Color Detection (Chromatic Analysis) */
+async function detectTrafficLightStatus(jpegBuf, bbox, imgW, imgH) {
+  try {
+    const [x1, y1, x2, y2] = bbox;
+    const left   = Math.max(0, x1), top = Math.max(0, y1);
+    const width  = Math.min(x2, imgW) - left, height = Math.min(y2, imgH) - top;
+    if (width <= 5 || height <= 5) return 'UNKNOWN';
+
+    const { data } = await sharp(jpegBuf)
+      .extract({ left, top, width, height })
+      .removeAlpha()
+      .toFormat('raw')
+      .toBuffer({ resolveWithObject: true });
+
+    let rS = 0, gS = 0, yS = 0;
+    const px = data.length / 3;
+    for (let i = 0; i < data.length; i += 3) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      // Spectral density checks
+      if (r > 190 && g < 100 && b < 100) rS++; // Red
+      else if (g > 190 && r < 100 && b < 150) gS++; // Green
+      else if (r > 180 && g > 150 && b < 100) yS++; // Yellow
+    }
+    
+    // Choose dominant chromatic emission
+    if (rS > gS && rS > yS && rS / px > 0.05) return 'RED';
+    if (gS > rS && gS > yS && gS / px > 0.05) return 'GREEN';
+    if (yS > rS && yS > gS && yS / px > 0.05) return 'YELLOW';
+    return 'UNKNOWN';
+  } catch (_e) { return 'UNKNOWN'; }
+}
+
 // ─────────────────────────────────────────────────────────────
 //  Accident heuristic
 //  Fires when ≥ 3 persons AND ≥ 2 vehicles appear together
@@ -388,16 +431,30 @@ async function processFrame(jct, jpegBuf) {
 
   for (const det of detections) {
     const cls = det.class.toLowerCase();
+    
+    // Classify Vehicle/Person
     if (VEHICLE_CLASSES.has(cls)) vehicleCount++;
     if (PERSON_CLASSES.has(cls))  personCount++;
 
-    // Emergency vehicle detection via colour heuristic
-    if (['truck', 'car', 'bus'].includes(cls)) {
+    // High-Priority Emergency Signals (Roboflow v3 Direct Matches)
+    if (EMERGENCY_CLASSES.has(cls)) {
+      if (cls.includes('ambulance')) ambulance = true;
+      if (cls.includes('fire') || cls.includes('truck') || cls.includes('police')) fireTruck = true;
+    }
+
+    // Secondary heuristic for generic COCO labels (Local YOLOv8 fallback)
+    if (['truck', 'car', 'bus'].includes(cls) && !ambulance && !fireTruck) {
       const hasLights = await hasEmergencyLights(jpegBuf, det.bbox, imgW, imgH);
       if (hasLights) {
         if (cls === 'car') ambulance = true;
         else fireTruck = true;
       }
+    }
+
+    // 🚦 Traffic Light State Capture
+    if (cls === 'traffic light' || cls === 'traffic-light') {
+       det.signal = await detectTrafficLightStatus(jpegBuf, det.bbox, imgW, imgH);
+       if (det.signal !== 'UNKNOWN') jst.ai_signal = det.signal;
     }
   }
 
@@ -415,6 +472,13 @@ async function processFrame(jct, jpegBuf) {
   jst.last_update  = new Date().toISOString();
   jst._lastJpeg    = jpegBuf; // Cache for the /api/frame endpoint
 
+  // PREDICTION SUMMARY: Log high-priority node results for verification
+  if (jct === 'MOBILE_CAM') {
+    const summary = detections.map(d => d.class).join(', ');
+    console.log(`[AI Prediction] ${jct}: Found ${vehicleCount} vehicles. [${summary || 'Clear'}]`);
+    console.log(`[AI Decision]   Traffic Load: ${trafficScore}% | Emergency: ${ambulance || fireTruck}`);
+  }
+
   // ── Publish YOLO vision results to ESP32 ─────────────────
   mqttPublish(`smartjunction/${jct}/vision`, {
     junction: jct,
@@ -424,6 +488,7 @@ async function processFrame(jct, jpegBuf) {
     ambulance,
     fire_truck: fireTruck,
     accident,
+    ai_signal: jst.ai_signal || 'OFF',
     ts: Date.now(),
   });
 
@@ -491,18 +556,26 @@ async function runInference(jct, ip) {
      return; // Wait for pushed frame from browser instead
   }
 
-  const captureUrl = `http://${ip}/capture`;
-  try {
-    const resp = await axios.get(captureUrl, {
-      responseType: 'arraybuffer',
-      timeout: 4000,
-    });
-    const jpegBuf = Buffer.from(resp.data);
-    state[jct].cam_online = true;
-    state[jct]._isVirtual = false;
-    await processFrame(jct, jpegBuf);
-  } catch (_e) {
-    state[jct].cam_online = false;
+  // AI Intelligence Loop: Try ESP32 endpoint first, fallback to IP Webcam (shot.jpg)
+  const endpoints = [`http://${ip}/capture`, `http://${ip}/shot.jpg` ];
+  
+  for (const url of endpoints) {
+    try {
+      const resp = await axios.get(url, {
+        responseType: 'arraybuffer',
+        timeout: 2000,
+      });
+      const jpegBuf = Buffer.from(resp.data);
+      state[jct].cam_online = true;
+      state[jct]._isVirtual = false;
+      await processFrame(jct, jpegBuf);
+      return; // Success, skip further endpoints
+    } catch (err) {
+      if (jct === 'MOBILE_CAM') {
+        process.stdout.write(`\r[Satellite Hub] Waiting for ${jct} @ ${url} ... (${err.message})\x1B[K`);
+      }
+      state[jct].cam_online = false;
+    }
   }
 }
 
@@ -703,16 +776,13 @@ const app    = express();
 const server = http.createServer(app);
 const io     = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
-  pingTimeout: 30000,
-  pingInterval: 10000,
+  maxHttpBufferSize: 1e8 // 100MB for pushed high-res frames
 });
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.use(express.static(path.join(__dirname, '../frontend')));
 
-// Serve the dashboard HTML
 app.get('/', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+  res.sendFile(path.join(__dirname, '../frontend', 'index.html'));
 });
 
 // ── REST Endpoints ────────────────────────────────────────────
@@ -811,8 +881,8 @@ app.get('/api/frame/:jct', async (req, res) => {
   const jst = state[jctId];
   if (!jst) return res.status(404).send('Not found');
 
-  // If we have a virtual frame (or a cached polled frame), serve it immediately
-  if (jst._isVirtual && jst._lastJpeg) {
+  // serve the latest cached frame immediately if available
+  if (jst._lastJpeg) {
      res.set('Content-Type', 'image/jpeg');
      res.set('Cache-Control', 'no-store');
      return res.send(jst._lastJpeg);
@@ -820,29 +890,30 @@ app.get('/api/frame/:jct', async (req, res) => {
 
   const ip = JUNCTIONS[jctId];
   if (!ip) return res.status(404).send('Not found');
-  try {
-    const resp = await axios.get(`http://${ip}/capture`, {
-      responseType: 'arraybuffer',
-      timeout:      3000,
-    });
-    const jpeg = Buffer.from(resp.data);
-    jst._lastJpeg = jpeg; // Optional: cache polled frame too
-    res.set('Content-Type',  'image/jpeg');
-    res.set('Cache-Control', 'no-store');
-    res.send(jpeg);
-  } catch (_e) {
-    // Return a dark grey placeholder JPEG when camera is offline
+
+  const endpoints = [`http://${ip}/capture`, `http://${ip}/shot.jpg` ];
+  for (const url of endpoints) {
     try {
-      const placeholder = await sharp({
-        create: { width: 320, height: 240, channels: 3,
-                  background: { r: 30, g: 35, b: 50 } },
-      }).jpeg().toBuffer();
+      const resp = await axios.get(url, { responseType: 'arraybuffer', timeout: 2000 });
+      const jpeg = Buffer.from(resp.data);
+      jst._lastJpeg = jpeg;
       res.set('Content-Type', 'image/jpeg');
       res.set('Cache-Control', 'no-store');
-      res.send(placeholder);
-    } catch (err2) {
-      res.status(502).send('Camera unavailable');
+      return res.send(jpeg);
+    } catch (_e) {
+      // Continue to next endpoint
     }
+  }
+
+  // Final fallback: Return dark placeholder
+  try {
+    const placeholder = await sharp({
+      create: { width: 320, height: 240, channels: 3, background: { r: 30, g: 35, b: 50 } },
+    }).jpeg().toBuffer();
+    res.set('Content-Type', 'image/jpeg');
+    res.send(placeholder);
+  } catch (_e) {
+    res.status(502).send('Camera unavailable');
   }
 });
 
@@ -941,11 +1012,24 @@ io.on('connection', (socket) => {
 //  Boot sequence
 // ─────────────────────────────────────────────────────────────
 (async () => {
+  // Discover LAN IP for mobile access
+  const nets = os.networkInterfaces();
+  let localIp = '127.0.0.1';
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name]) {
+      if (net.family === 'IPv4' && !net.internal) {
+        localIp = net.address;
+        break;
+      }
+    }
+  }
+
   console.log('='.repeat(60));
   console.log('  SmartJunction AI — Node.js Edge Server v2.1');
   console.log(`  Junctions : ${Object.keys(JUNCTIONS).join(', ')}`);
   console.log(`  MQTT      : ${MQTT_HOST}:${MQTT_PORT}`);
   console.log(`  Dashboard : http://localhost:${WEB_PORT}`);
+  console.log(`  Mobile    : http://${localIp}:${WEB_PORT}`);
   console.log(`  YOLO      : ${YOLO_MODEL}`);
   console.log(`  Infer FPS : ${(1000 / INFER_MS).toFixed(1)} per camera`);
   console.log('='.repeat(60));

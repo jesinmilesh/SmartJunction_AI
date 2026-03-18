@@ -10,10 +10,11 @@ const state = {
     allJunctions: {},
     connected: false,
     alerts: [],
-    junctions: ['J1', 'J2', 'J3', 'J4'],
+    junctions: ['J1', 'J2', 'J3', 'J4', 'MOBILE_CAM'],
     webcamActive: false,
     webcamStream: null,
-    webcamInterval: null
+    webcamInterval: null,
+    currentFacingMode: 'environment' // default to back camera
 };
 
 // --- DOM Cache (Focus HUD) ---
@@ -42,7 +43,12 @@ const elements = {
     // New Real-time Overlays
     localVideo: document.getElementById('local-video'),
     detCanvas: document.getElementById('det-canvas'),
-    webcamBtn: document.getElementById('webcam-toggle')
+    webcamBtn: document.getElementById('webcam-toggle'),
+    rotateBtn: document.getElementById('cam-rotate'),
+    
+    // Mini Monitor
+    miniStream: document.getElementById('mobile-cam-preview'),
+    miniError: document.getElementById('mobile-cam-error')
 };
 
 // High-fidelity SFX for Cinematic Feedback
@@ -123,6 +129,13 @@ function initSocket() {
     state.socket.on('vision_update', (data) => {
         if (data.junction === state.selectedJct) {
             drawDetections(data.detections);
+            
+            // SYNCHRONIZED REFRESH: Update the image exactly when detections arrive
+            // This ensures bounding boxes perfectly match current traffic state
+            if (!state.webcamActive) {
+                elements.streamFocus.src = `http://${window.location.hostname}:5000/api/frame/${state.selectedJct}?t=${Date.now()}`;
+            }
+
             // Low-latency stat update
             elements.svFocus.textContent = data.v || 0;
             elements.spFocus.textContent = data.p || 0;
@@ -179,16 +192,17 @@ function updateUI() {
     elements.barFocus.style.boxShadow = `0 0 10px ${elements.barFocus.style.background}`;
 
     // Main Stream & Overlay
-    if (data.cam_online) {
+    if (data.cam_online && !state.webcamActive) {
         elements.placeholderFocus.classList.add('hidden');
         elements.streamFocus.classList.remove('hidden');
-        // MJPEG is more efficient than polling single frames for the main HUD view
-        const streamUrl = `http://${window.location.hostname}:5000/api/frame/${state.selectedJct}?t=${Date.now()}`;
-        if (!elements.streamFocus.src || Date.now() % 3000 < 500) elements.streamFocus.src = streamUrl;
+    } else if (state.webcamActive) {
+        elements.placeholderFocus.classList.add('hidden');
+        elements.streamFocus.classList.add('hidden');
     } else {
         elements.streamFocus.classList.add('hidden');
         elements.placeholderFocus.classList.remove('hidden');
         elements.streamFocus.src = '';
+        drawDetections([]); // Clear boxes if feed is dead
     }
 
     // AI Detections HUD
@@ -200,6 +214,20 @@ function updateUI() {
 
     // AI Insight Dashboard Logic
     updateAIInsights(data);
+
+    // Side Mini Monitor Logic (Self-Refreshing Satellite Feed)
+    const mobileData = state.allJunctions['MOBILE_CAM'];
+    if (mobileData && mobileData.cam_online) {
+        elements.miniError.classList.add('hidden');
+        elements.miniStream.classList.remove('hidden');
+        // Refresh thumbnail occasionally
+        if (!elements.miniStream.src || Date.now() % 4000 < 250) {
+            elements.miniStream.src = `http://${window.location.hostname}:5000/api/frame/MOBILE_CAM?t=${Date.now()}`;
+        }
+    } else {
+        elements.miniStream.classList.add('hidden');
+        elements.miniError.classList.remove('hidden');
+    }
 
     // Violation Strobe
     if (data.violation) {
@@ -315,56 +343,80 @@ function startSimulation() {
  */
 async function toggleWebcam() {
     if (state.webcamActive) {
-        // Stop Webcam
-        if (state.webcamStream) {
-            state.webcamStream.getTracks().forEach(track => track.stop());
-        }
-        clearInterval(state.webcamInterval);
-        state.webcamActive = false;
-        state.webcamStream = null;
-        
-        elements.localVideo.classList.add('hidden');
-        elements.streamFocus.classList.remove('hidden');
-        elements.webcamBtn.innerHTML = '<span id="webcam-status-dot" class="status-dot offline"></span> LOCAL WEBCAM: OFF';
-        addLogEntry('>> ACCESS_TERMINATED: LOCAL_WEB_CAMERA_OFF');
-        
-        // Clear detections
-        drawDetections([]);
+        stopWebcam();
     } else {
-        // Start Webcam
-        try {
-            const constraints = { 
-                video: { width: 640, height: 480, facingMode: "environment" } 
-            };
-            
-            addLogEntry('>> REQUESTING_CAMERA_ACCESS...');
-            state.webcamStream = await navigator.mediaDevices.getUserMedia(constraints);
-            elements.localVideo.srcObject = state.webcamStream;
-            state.webcamActive = true;
-            
-            elements.localVideo.classList.remove('hidden');
-            elements.streamFocus.classList.add('hidden');
-            elements.placeholderFocus.classList.add('hidden');
-
-            elements.webcamBtn.innerHTML = '<span id="webcam-status-dot" class="status-dot online"></span> LOCAL WEBCAM: ACTIVE';
-            addLogEntry('>> ✓ ACCESS_GRANTED: STREAMING LOCAL_FEED TO AI_CORE');
-
-            // Real-time Push: 5 FPS (matches server INFER_FPS)
-            state.webcamInterval = setInterval(captureAndPushFrame, 200);
-        } catch (err) {
-            addLogEntry(`>> ! ERROR: CAMERA_ACCESS_DENIED [${err.message}]`);
-            console.error(err);
-        }
+        startWebcam();
     }
+}
+
+async function startWebcam() {
+    try {
+        const constraints = { 
+            video: { 
+                width: { ideal: 640 }, 
+                height: { ideal: 480 }, 
+                facingMode: state.currentFacingMode 
+            } 
+        };
+        
+        addLogEntry('>> REQUESTING_CAMERA_ACCESS...');
+        state.webcamStream = await navigator.mediaDevices.getUserMedia(constraints);
+        elements.localVideo.srcObject = state.webcamStream;
+        state.webcamActive = true;
+        
+        elements.localVideo.classList.remove('hidden');
+        elements.streamFocus.classList.add('hidden');
+        elements.placeholderFocus.classList.add('hidden');
+        
+        // Show rotation button if using local webcam (useful on mobile)
+        elements.rotateBtn.classList.remove('hidden');
+
+        elements.webcamBtn.innerHTML = '<span id="webcam-status-dot" class="status-dot online"></span> WEBCAM: ON';
+        addLogEntry('>> ✓ ACCESS_GRANTED: STREAMING LOCAL_FEED TO AI_CORE');
+
+        // Real-time Push: 5 FPS (matches server INFER_FPS)
+        state.webcamInterval = setInterval(captureAndPushFrame, 200);
+    } catch (err) {
+        addLogEntry(`>> ! ERROR: CAMERA_ACCESS_DENIED [${err.message}]`);
+        console.error(err);
+    }
+}
+
+function stopWebcam() {
+    if (state.webcamStream) {
+        state.webcamStream.getTracks().forEach(track => track.stop());
+    }
+    clearInterval(state.webcamInterval);
+    state.webcamActive = false;
+    state.webcamStream = null;
+    
+    elements.localVideo.classList.add('hidden');
+    elements.streamFocus.classList.remove('hidden');
+    elements.rotateBtn.classList.add('hidden');
+    
+    elements.webcamBtn.innerHTML = '<span id="webcam-status-dot" class="status-dot offline"></span> WEBCAM';
+    addLogEntry('>> ACCESS_TERMINATED: LOCAL_WEB_CAMERA_OFF');
+    
+    // Clear detections
+    drawDetections([]);
+}
+
+async function switchCamera() {
+    if (!state.webcamActive) return;
+    
+    state.currentFacingMode = (state.currentFacingMode === 'user') ? 'environment' : 'user';
+    addLogEntry(`>> ROTATING_LENS: SWITCHING TO ${state.currentFacingMode.toUpperCase()}_SENSOR`);
+    
+    stopWebcam();
+    await startWebcam();
 }
 
 function captureAndPushFrame() {
     if (!state.connected || !state.webcamActive) return;
 
     const ctx = elements.hiddenCanvas.getContext('2d');
-    // Draw from local-video instead of hidden video (though they are same stream)
     ctx.drawImage(elements.localVideo, 0, 0, 640, 480);
-    const dataUrl = elements.hiddenCanvas.toDataURL('image/jpeg', 0.5); // Slightly lower quality for speed
+    const dataUrl = elements.hiddenCanvas.toDataURL('image/jpeg', 0.6); 
     
     state.socket.emit('push_frame', {
         junction: state.selectedJct,
