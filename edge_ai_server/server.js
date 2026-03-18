@@ -29,6 +29,9 @@ const axios      = require('axios');
 const sharp      = require('sharp');
 const ort        = require('onnxruntime-node');
 const fs         = require('fs');
+const { Aedes }  = require('aedes');
+const aedes      = new Aedes();
+const net        = require('net');
 
 // ─────────────────────────────────────────────────────────────
 //  Configuration  (also read from .env)
@@ -39,6 +42,12 @@ const WEB_PORT    = parseInt(process.env.WEB_PORT    || '5000', 10);
 const YOLO_MODEL  = process.env.YOLO_MODEL  || path.join(__dirname, 'yolov8n.onnx');
 const CONF_THRESH = parseFloat(process.env.CONF_THRESH || '0.45');
 const INFER_MS    = Math.round(1000 / parseFloat(process.env.INFER_FPS || '2'));
+
+// Roboflow Cloud Intelligence (Dataset v3)
+const RF_API_KEY  = process.env.ROBOFLOW_API_KEY;
+const RF_MODEL_ID = process.env.ROBOFLOW_MODEL_ID || 'smartjunction-traffic/3';
+const RF_URL      = `https://detect.roboflow.com/${RF_MODEL_ID}?api_key=${RF_API_KEY}`;
+const RF_THROTTLE = 5000; // Only call Roboflow every 5 seconds per junction
 
 // How often (ms) to re-broadcast emergency per junction (throttle)
 const EMERGENCY_BROADCAST_INTERVAL = 10000;
@@ -84,14 +93,38 @@ for (const [jct, ip] of Object.entries(JUNCTIONS)) {
     signal: 'GREEN', emergency: false, manual: false,
     dist: 999, ir: 0, pir: 0,
     cam_online: false, last_update: null,
-    cam_url: `http://${ip}`,
+    cam_url: `http://${ip}/capture`,
     detections: [],
-    active: true, // Only process if active
-    // internal throttle: last time we broadcast an emergency for this junction
+    active: true,
+    violation: false,
+    uptime: 0,
     _lastEmBroadcast: 0,
-    // internal: last accident alert timestamp (prevent spam)
     _lastAccidentAlert: 0,
+    _history: [] // Rolling chart data (v, t)
   };
+}
+
+let lastGridlockCheck = 0;
+
+function updateHistory(jct) {
+  const jst = state[jct];
+  jst._history.push({ v: jst.vehicles, t: jst.traffic_score, ts: Date.now() });
+  if (jst._history.length > 20) jst._history.shift();
+}
+
+function runCityIntelligence() {
+  const now = Date.now();
+  if (now - lastGridlockCheck < 10000) return;
+  lastGridlockCheck = now;
+
+  const heavy = Object.keys(state).filter(j => state[j].traffic_score > 85);
+  if (heavy.length >= 2) {
+    addAlert({
+      source: 'CITY_CORE',
+      type: 'GRIDLOCK',
+      details: `Critical load across nodes: ${heavy.join(', ')}. Diverting traffic flow.`
+    });
+  }
 }
 
 /** Rolling alert log (newest first, capped at 200) */
@@ -172,8 +205,8 @@ function processYOLOOutput(rawOutput, imgW, imgH) {
     const w  = data[2 * boxes + b];
     const h  = data[3 * boxes + b];
 
-    const scaleX = imgW / YOLO_SIZE;
-    const scaleY = imgH / YOLO_SIZE;
+    const scaleX = imgW / 640; // Local YOLO usually training on 640x640
+    const scaleY = imgH / 640;
     const x1 = Math.max(0, Math.round((cx - w / 2) * scaleX));
     const y1 = Math.max(0, Math.round((cy - h / 2) * scaleY));
     const x2 = Math.min(imgW, Math.round((cx + w / 2) * scaleX));
@@ -188,6 +221,43 @@ function processYOLOOutput(rawOutput, imgW, imgH) {
   }
 
   return nms(detections, 0.45);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Roboflow Inference Logic
+// ─────────────────────────────────────────────────────────────
+async function runRoboflowInference(jpegBuf) {
+  if (!RF_API_KEY) return [];
+  
+  try {
+    const base64 = jpegBuf.toString('base64');
+    const resp = await axios({
+      method: 'POST',
+      url: RF_URL,
+      data: base64,
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      timeout: 8000
+    });
+    
+    if (!resp.data.predictions) return [];
+
+    return resp.data.predictions.map(p => {
+      // Roboflow center coords to x1,y1,x2,y2
+      const x1 = Math.round(p.x - p.width / 2);
+      const y1 = Math.round(p.y - p.height / 2);
+      const x2 = Math.round(p.x + p.width / 2);
+      const y2 = Math.round(p.y + p.height / 2);
+
+      return {
+        class: p.class.toLowerCase(),
+        conf: p.confidence,
+        bbox: [x1, y1, x2, y2]
+      };
+    });
+  } catch (err) {
+    console.error('[Roboflow] API Error:', err.message);
+    return [];
+  }
 }
 
 // IoU helper for NMS
@@ -265,27 +335,14 @@ function detectAccident(vehicleCount, personCount) {
 // ─────────────────────────────────────────────────────────────
 //  Per-junction inference loop
 // ─────────────────────────────────────────────────────────────
-async function runInference(jct, ip) {
-  if (!state[jct].active) {
-    state[jct].cam_online = false;
-    return;
-  }
-  const captureUrl = `http://${ip}/capture`;
-  let jpegBuf;
+/**
+ * General frame processing (called by IP puller or WebSocket pusher)
+ */
+async function processFrame(jct, jpegBuf) {
+  if (!state[jct] || !state[jct].active) return;
+  const jst = state[jct];
 
-  try {
-    const resp = await axios.get(captureUrl, {
-      responseType: 'arraybuffer',
-      timeout: 4000,
-    });
-    jpegBuf = Buffer.from(resp.data);
-    state[jct].cam_online = true;
-  } catch (_e) {
-    state[jct].cam_online = false;
-    return;
-  }
-
-  // Get image dimensions
+  // Get image dimensions for box scaling
   let imgW = 640, imgH = 480;
   try {
     const meta = await sharp(jpegBuf).metadata();
@@ -295,16 +352,34 @@ async function runInference(jct, ip) {
 
   let detections = [];
 
-  // ── YOLO inference ────────────────────────────────────────
-  if (session) {
+  // --- Hybrid Inference Engine ---
+  const now = Date.now();
+  const shouldCallRF = RF_API_KEY && (now - (jst._lastRFCall || 0) > RF_THROTTLE);
+
+  // 1. Periodic Roboflow Validation (High Precision, User Dataset)
+  if (shouldCallRF) {
+    jst._lastRFCall = now;
+    const rfDets = await runRoboflowInference(jpegBuf);
+    if (rfDets && rfDets.length > 0) {
+      detections = rfDets;
+    }
+  }
+
+  // 2. Local YOLOv8 (Real-time, Low Latency tracking)
+  if (detections.length === 0 && session) {
     try {
       const tensor  = await jpegToTensor(jpegBuf);
       const results = await session.run({ images: tensor });
       const output  = results[Object.keys(results)[0]];
       detections    = processYOLOOutput(output, imgW, imgH);
     } catch (err) {
-      console.error(`[${jct}] Inference error:`, err.message);
+      console.error(`[${jct}] Local inference fault:`, err.message);
     }
+  }
+
+  // Keep old detections if current inference fails (persistance)
+  if (detections.length === 0 && jst.detections && jst.detections.length > 0) {
+    detections = jst.detections;
   }
 
   // ── Count object classes ──────────────────────────────────
@@ -316,11 +391,10 @@ async function runInference(jct, ip) {
     if (VEHICLE_CLASSES.has(cls)) vehicleCount++;
     if (PERSON_CLASSES.has(cls))  personCount++;
 
-    // Emergency vehicle detection via colour heuristic on large vehicles
+    // Emergency vehicle detection via colour heuristic
     if (['truck', 'car', 'bus'].includes(cls)) {
       const hasLights = await hasEmergencyLights(jpegBuf, det.bbox, imgW, imgH);
       if (hasLights) {
-        // We guess it's an ambulance if it's car-sized, fire truck if larger
         if (cls === 'car') ambulance = true;
         else fireTruck = true;
       }
@@ -331,7 +405,6 @@ async function runInference(jct, ip) {
   const accident     = detectAccident(vehicleCount, personCount);
 
   // ── Update junction state ─────────────────────────────────
-  const jst        = state[jct];
   jst.vehicles     = vehicleCount;
   jst.persons      = personCount;
   jst.traffic_score = trafficScore;
@@ -340,6 +413,7 @@ async function runInference(jct, ip) {
   jst.accident     = accident;
   jst.detections   = detections.slice(0, 20);
   jst.last_update  = new Date().toISOString();
+  jst._lastJpeg    = jpegBuf; // Cache for the /api/frame endpoint
 
   // ── Publish YOLO vision results to ESP32 ─────────────────
   mqttPublish(`smartjunction/${jct}/vision`, {
@@ -353,7 +427,7 @@ async function runInference(jct, ip) {
     ts: Date.now(),
   });
 
-  // ── Emergency broadcast (throttled per junction) ──────────
+  // ── Emergency broadcast ───────────────────────────────────
   if (ambulance || fireTruck) {
     const now = Date.now();
     if (now - jst._lastEmBroadcast > EMERGENCY_BROADCAST_INTERVAL) {
@@ -364,14 +438,12 @@ async function runInference(jct, ip) {
         source: jct, type: emType,
         details: `Emergency vehicle detected at ${jct} — lane priority activated`,
       });
-      console.warn(`[${jct}] 🚨 ${emType} detected!`);
     }
   } else {
-    // Reset broadcast throttle when no emergency visible
     jst._lastEmBroadcast = 0;
   }
 
-  // ── Accident / suspicious activity alert (throttled 30 s) ─
+  // ── Accident alert ────────────────────────────────────────
   if (accident) {
     const now = Date.now();
     if (now - jst._lastAccidentAlert > 30000) {
@@ -384,15 +456,56 @@ async function runInference(jct, ip) {
         source: jct, type: 'ACCIDENT',
         details: `Accident/suspicious activity detected at ${jct}`,
       });
-      console.warn(`[${jct}] ⚠️  Accident heuristic triggered`);
     }
   } else {
     jst._lastAccidentAlert = 0;
   }
 
-  // Push live update to dashboard
+  // ── Push live update to dashboard ──────────────────────────
+  // Emit state only for this junction to save bandwidth if needed,
+  // but publicState() is small so we keep it. 
+  // ADDITION: emit discrete vision_update for low-latency drawing
+  io.emit('vision_update', {
+    junction: jct,
+    detections: jst.detections,
+    v: vehicleCount,
+    p: personCount,
+    t: trafficScore,
+    em: (ambulance || fireTruck),
+    violation: jst.violation
+  });
+
   io.emit('state_update', publicState());
 }
+
+async function runInference(jct, ip) {
+  if (!state[jct].active) {
+    state[jct].cam_online = false;
+    return;
+  }
+  
+  // Skip polling if the junction is currently in "Virtual/Webcam" mode
+  const now = Date.now();
+  const lastUp = new Date(state[jct].last_update || 0).getTime();
+  if (state[jct]._isVirtual && (now - lastUp < 5000)) {
+     return; // Wait for pushed frame from browser instead
+  }
+
+  const captureUrl = `http://${ip}/capture`;
+  try {
+    const resp = await axios.get(captureUrl, {
+      responseType: 'arraybuffer',
+      timeout: 4000,
+    });
+    const jpegBuf = Buffer.from(resp.data);
+    state[jct].cam_online = true;
+    state[jct]._isVirtual = false;
+    await processFrame(jct, jpegBuf);
+  } catch (_e) {
+    state[jct].cam_online = false;
+  }
+}
+
 
 // ─────────────────────────────────────────────────────────────
 //  Start per-junction inference loops (staggered)
@@ -414,82 +527,141 @@ function startInferenceLoops() {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  MQTT client
+//  MQTT Core: Distributed Embedded Broker
 // ─────────────────────────────────────────────────────────────
-const mqttClient = mqttLib.connect(`mqtt://${MQTT_HOST}:${MQTT_PORT}`, {
-  clientId:        'SmartJunction-EdgeServer',
-  clean:           true,
-  reconnectPeriod: 3000,
-  connectTimeout:  8000,
-});
 
-mqttClient.on('connect', () => {
-  console.log(`[MQTT] ✓ Connected → ${MQTT_HOST}:${MQTT_PORT}`);
-  mqttClient.subscribe('smartjunction/+/sensors',   { qos: 0 });
-  mqttClient.subscribe('smartjunction/+/camera',    { qos: 0 });
-  mqttClient.subscribe('smartjunction/alerts',      { qos: 0 });
-  mqttClient.subscribe('smartjunction/emergency',   { qos: 1 });
-  console.log('[MQTT] Subscribed to all smartjunction/# topics');
-});
+// Start an internal broker if port is free — makes the server self-sustaining
+function startEmbeddedBroker(port) {
+  return new Promise((resolve) => {
+    const brokerServer = net.createServer(aedes.handle);
+    brokerServer.once('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.log(`[Broker] External MQTT broker already active on port ${port} — using existing host.`);
+      } else {
+        console.error('[Broker] Failed to start:', err.message);
+      }
+      resolve(false);
+    });
 
-mqttClient.on('reconnect', () => {
-  console.warn('[MQTT] Reconnecting…');
-});
+    brokerServer.listen(port, () => {
+      console.log(`[Broker] ✓ Cognitive Core MQTT Hub active → Port ${port}`);
+      
+      // Monitor clients (for debugging)
+      aedes.on('client', (client) => {
+        // console.log(`[Mesh] Linked: ${client.id}`);
+      });
+      
+      resolve(true);
+    });
+  });
+}
 
-mqttClient.on('error', (err) => {
-  console.error('[MQTT] Error:', err.message);
-});
+// Global MQTT Client
+let mqttClient;
 
-mqttClient.on('message', (topic, message) => {
+async function initMQTT() {
+  await startEmbeddedBroker(MQTT_PORT);
+
+  // Forced IPv4 '127.0.0.1' — avoids Windows IPv6 'localhost' resolution delays & connack timeouts
+  const targetHost = (MQTT_HOST === 'localhost' || MQTT_HOST === '::1') ? '127.0.0.1' : MQTT_HOST;
+  
+  mqttClient = mqttLib.connect(`mqtt://${targetHost}:${MQTT_PORT}`, {
+    clientId:        'SmartJunction-EdgeServer',
+    clean:           true,
+    reconnectPeriod: 2000, 
+    connectTimeout:  30000, // Very generous for local handshake
+    keepalive:       60,
+  });
+
+  mqttClient.on('connect', () => {
+    console.log(`[MQTT] ✓ Client linked → ${MQTT_HOST}:${MQTT_PORT}`);
+    mqttClient.subscribe('smartjunction/+/sensors',   { qos: 0 });
+    mqttClient.subscribe('smartjunction/+/camera',    { qos: 0 });
+    mqttClient.subscribe('smartjunction/alerts',      { qos: 0 });
+    mqttClient.subscribe('smartjunction/emergency',   { qos: 1 });
+    console.log('[MQTT] Zero-lag mesh channel synchronized.');
+  });
+
+  mqttClient.on('reconnect', () => {
+    // Only warn if we haven't connected after a while to reduce noise
+    if (mqttClient.reconnectCount > 3) {
+      console.warn('[MQTT] Retrying network handshake…');
+    }
+  });
+
+  mqttClient.on('error', (err) => {
+    if (err.code !== 'ECONNREFUSED') {
+       console.error('[MQTT] Fault detected:', err.message);
+    }
+  });
+
+  mqttClient.on('message', handleMQTTMessage);
+}
+
+function handleMQTTMessage(topic, message) {
   let data;
   try {
     data = JSON.parse(message.toString());
   } catch (_e) {
     data = { raw: message.toString() };
+    return;
   }
 
-  const parts = topic.split('/'); // e.g. ['smartjunction', 'J1', 'sensors']
+  const parts = topic.split('/'); 
 
-  // ── Per-junction topics (length 3) ────────────────────────
+  // 1. Per-junction sensors/camera topics
   if (parts.length === 3) {
     const [, jct, kind] = parts;
     if (state[jct]) {
       if (kind === 'sensors') {
-        Object.assign(state[jct], {
-          dist:          data.dist      ?? state[jct].dist,
-          ir:            data.ir        ?? state[jct].ir,
-          pir:           data.pir       ?? state[jct].pir,
-          vehicles:      data.vehicles  ?? state[jct].vehicles,
-          persons:       data.persons   ?? state[jct].persons,
-          traffic_score: data.traffic_score ?? state[jct].traffic_score,
-          ambulance:     data.ambulance ?? (data.emergency && data.type === 'AMBULANCE') ?? state[jct].ambulance,
-          fire_truck:    data.fire_truck ?? (data.emergency && data.type === 'FIRE_TRUCK') ?? state[jct].fire_truck,
-          signal:        data.signal    ?? state[jct].signal,
-          emergency:     data.emergency ?? state[jct].emergency,
-          manual:        data.manual    ?? state[jct].manual,
-          last_update:   new Date().toISOString(),
-        });
+        state[jct].dist          = data.distance ?? data.dist ?? state[jct].dist;
+        state[jct].vehicles      = data.vehicles ?? state[jct].vehicles;
+        state[jct].traffic_score = data.traffic_score ?? data.cong ?? state[jct].traffic_score;
+        state[jct].pir           = data.pir ?? state[jct].pir;
+        state[jct].ir            = data.ir  ?? state[jct].ir;
+        state[jct].signal        = data.signal ?? state[jct].signal;
+        state[jct].uptime        = data.uptime ?? state[jct].uptime;
+        state[jct].last_update   = new Date().toISOString();
+
+        if (data.violation && !state[jct].violation) {
+          addAlert({ source: jct, type: 'VIOLATION', details: 'Hardware sensors detected an illegal movement!' });
+        }
+        state[jct].violation = !!data.violation;
+
+        updateHistory(jct);
+        runCityIntelligence();
         io.emit('state_update', publicState());
       }
+      
       if (kind === 'camera') {
-        state[jct].cam_online  = data.status === 'online' || data.status === 'heartbeat';
-        state[jct].cam_url     = data.stream_url || state[jct].cam_url;
-        state[jct].last_update = new Date().toISOString();
+        state[jct].cam_online = (data.status === 'online' || data.status === 'heartbeat');
+        state[jct].cam_url    = data.stream_url || state[jct].cam_url;
         io.emit('state_update', publicState());
       }
     }
   }
 
-  // ── Broadcast topics (length 2) ───────────────────────────
+  // 2. Global topics
   if (parts.length === 2) {
     const kind = parts[1];
-    const src  = data.source || '?';
-    const type = data.type   || 'INFO';
-    if ((kind === 'alerts' || kind === 'emergency') && type !== 'CLEAR') {
-      addAlert({ source: src, type, details: data.details || '' });
+    if (kind === 'alerts') {
+      addAlert(data);
+    } else if (kind === 'emergency') {
+      if (data.type === 'CLEAR') {
+        for (const s of Object.values(state)) {
+          s.emergency = false;
+          s.ambulance = false;
+          s.fire_truck = false;
+          s.violation = false;
+          s._lastEmBroadcast = 0;
+        }
+        io.emit('state_update', publicState());
+      } else {
+        addAlert({ source: data.source || '?', type: data.type || 'EMERGENCY', details: data.details || '' });
+      }
     }
   }
-});
+}
 
 function mqttPublish(topic, payload, retain = false) {
   if (!mqttClient.connected) return;
@@ -635,16 +807,29 @@ app.post('/api/emergency/clear', (_req, res) => {
 
 // Proxy single JPEG frame from ESP32-CAM (avoids browser CORS issues)
 app.get('/api/frame/:jct', async (req, res) => {
-  const ip = JUNCTIONS[req.params.jct];
+  const jctId = req.params.jct;
+  const jst = state[jctId];
+  if (!jst) return res.status(404).send('Not found');
+
+  // If we have a virtual frame (or a cached polled frame), serve it immediately
+  if (jst._isVirtual && jst._lastJpeg) {
+     res.set('Content-Type', 'image/jpeg');
+     res.set('Cache-Control', 'no-store');
+     return res.send(jst._lastJpeg);
+  }
+
+  const ip = JUNCTIONS[jctId];
   if (!ip) return res.status(404).send('Not found');
   try {
     const resp = await axios.get(`http://${ip}/capture`, {
       responseType: 'arraybuffer',
       timeout:      3000,
     });
+    const jpeg = Buffer.from(resp.data);
+    jst._lastJpeg = jpeg; // Optional: cache polled frame too
     res.set('Content-Type',  'image/jpeg');
     res.set('Cache-Control', 'no-store');
-    res.send(Buffer.from(resp.data));
+    res.send(jpeg);
   } catch (_e) {
     // Return a dark grey placeholder JPEG when camera is offline
     try {
@@ -735,6 +920,21 @@ io.on('connection', (socket) => {
     io.emit('state_update', publicState());
     console.log('[WS GLOBAL] Emergency state reset for all nodes');
   });
+
+  // Browser → Push frame (for Virtual Cam / Mobile Cam)
+  socket.on('push_frame', async ({ junction, image }) => {
+    if (!junction || !image || !state[junction]) return;
+    
+    try {
+      // image is expected as base64 string
+      const buf = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
+      state[junction].cam_online = true;
+      state[junction]._isVirtual = true; // Mark as virtual so poller skips
+      await processFrame(junction, buf);
+    } catch (err) {
+      console.error(`[WS PUSH] Error processing frame for ${junction}:`, err.message);
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -756,6 +956,9 @@ io.on('connection', (socket) => {
     console.log(`[Web] Dashboard ready → http://localhost:${WEB_PORT}`);
   });
 
-  // Wait 2 s for MQTT to connect before starting inference
-  setTimeout(startInferenceLoops, 2000);
+  // Initialize MQTT mesh
+  await initMQTT();
+
+  // Wait 1 s for MQTT to connect before starting inference
+  setTimeout(startInferenceLoops, 1000);
 })();

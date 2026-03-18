@@ -4,19 +4,21 @@
   "description": "SmartJunction AI — Node.js Edge Server with YOLO ONNX inference, MQTT & live dashboard",
   "main": "server.js",
   "scripts": {
-    "start":   "node server.js",
-    "dev":     "node --watch server.js",
+    "start": "node server.js",
+    "dev": "node --watch server.js",
     "install-model": "node download-model.js"
   },
   "dependencies": {
-    "express":              "^4.18.2",
-    "socket.io":            "^4.7.2",
-    "mqtt":                 "^5.3.4",
-    "axios":                "^1.6.7",
-    "onnxruntime-node":     "^1.17.1",
-    "sharp":                "^0.33.2",
-    "cors":                 "^2.8.5",
-    "dotenv":               "^16.4.1"
+    "aedes": "^1.0.1",
+    "axios": "^1.6.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.1",
+    "express": "^4.18.2",
+    "mqtt": "^5.3.4",
+    "net": "^1.0.2",
+    "onnxruntime-node": "^1.17.1",
+    "sharp": "^0.33.2",
+    "socket.io": "^4.7.2"
   },
   "engines": {
     "node": ">=18.0.0"

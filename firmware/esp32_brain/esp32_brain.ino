@@ -34,8 +34,8 @@ const char* JUNCTION_ID    = "J1";
 const char* CAM_IP         = "192.168.1.102";  // IP of the ESP32-CAM (Node-J1)
 
 // Roboflow credentials
-const char* RF_API_KEY     = "YOUR_ROBOFLOW_API_KEY"; 
-const char* RF_MODEL_ID    = "samriddhi-gr8bp/traffic-management-model-dl9fw/3"; 
+const char* RF_API_KEY     = "x4eWsXXfGZUxZ2PrVifr"; 
+const char* RF_MODEL_ID    = "smartjunction-traffic/1"; 
 // Note: Ensure your Roboflow model includes "ambulance" and "fire brigade" classes.
 
 // Hardware Pins (Standard Dev Module)
@@ -61,6 +61,7 @@ Adafruit_SSD1306 display(SCREEN_W, SCREEN_H, &Wire, -1);
 // System State
 bool emergencyActive = false;
 unsigned long emergencyStart = 0;
+unsigned long lastSignalChange = 0;
 String signalState = "RED"; // RED, YELLOW, GREEN, EMERGENCY
 int vehicleCount = 0;
 int personCount = 0;
@@ -71,12 +72,14 @@ int megaPIR  = 0;
 bool manualOverride = false;
 bool isAmbulance = false;
 bool isFireTruck = false;
+bool violationDetected = false;
 
 // MQTT Topics (Node-RED Compatible)
 const char* topicStatus = "smartjunction/J1/status";
 const char* topicSensors = "smartjunction/J1/sensors";
 const char* topicCmd = "smartjunction/J1/cmd";
 const char* topicEmergency = "smartjunction/emergency";
+const char* topicAlerts = "smartjunction/alerts";
 
 // ────────────────────────────────────────────────────────────
 //  Actuator Functions
@@ -85,17 +88,48 @@ void setSignal(String state) {
     if (emergencyActive && state != "EMERGENCY") return;
     
     signalState = (state == "EMERGENCY") ? "EMERGENCY" : state;
+    lastSignalChange = millis();
     
     // Physical Signals
     digitalWrite(RED_LED, (state == "RED" ? HIGH : LOW));
     digitalWrite(YELLOW_LED, (state == "YELLOW" ? HIGH : LOW));
     digitalWrite(GREEN_LED, (state == "GREEN" || state == "EMERGENCY" ? HIGH : LOW));
-    digitalWrite(BUZZER_PIN, (state == "EMERGENCY" ? HIGH : LOW));
+    
+    // Buzzer Logic
+    if (state == "EMERGENCY") {
+        // High frequency continuous for emergency
+        analogWrite(BUZZER_PIN, 200); 
+    } else if (state == "GREEN" && (megaPIR || megaIR)) {
+        // Warning beep if pedestrians are nearby while shifting
+        tone(BUZZER_PIN, 1000, 200);
+    } else {
+        noTone(BUZZER_PIN);
+        analogWrite(BUZZER_PIN, 0);
+    }
     
     if (state == "GREEN" || state == "EMERGENCY") {
         barrierServo.write(90); // Open
     } else {
         barrierServo.write(0);  // Close
+    }
+}
+
+void reportViolation() {
+    violationDetected = true;
+    Serial.println(F("[SECURITY] TRAFFIC VIOLATION DETECTED"));
+    
+    StaticJsonDocument<128> doc;
+    doc["source"] = JUNCTION_ID;
+    doc["type"] = "VIOLATION";
+    doc["details"] = "Vehicle/Pedestrian moved during RED signal";
+    char buf[128];
+    serializeJson(doc, buf);
+    mqtt.publish(topicAlerts, buf);
+    
+    // Strobe buzzer
+    for(int i=0; i<3; i++) {
+        digitalWrite(BUZZER_PIN, HIGH); delay(100);
+        digitalWrite(BUZZER_PIN, LOW); delay(100);
     }
 }
 
@@ -123,16 +157,28 @@ void updateOLED() {
     display.clearDisplay();
     display.setCursor(0,0);
     display.setTextSize(1);
-    display.printf("JUNCTION: %s\n", JUNCTION_ID);
-    display.printf("MODE: %s\n", manualOverride ? "MANUAL" : "AUTO");
-    display.printf("SIGNAL: %s\n", signalState.c_str());
+    display.setTextColor(SSD1306_WHITE);
+    
+    display.printf("NODE: %s | %s\n", JUNCTION_ID, manualOverride ? "MAN" : "AI");
+    display.printf("SIG: [%s]\n", signalState.c_str());
     display.println("--------------");
-    display.printf("V:%d | DIST:%dcm\n", vehicleCount, megaDist);
-    display.printf("TRAFFIC: %d%%\n", megaCong);
+    
+    // Visual Progress Bar for Signal
+    int prog = map(millis() - lastSignalChange, 0, 10000, 0, 128);
+    display.drawRect(0, 32, 128, 6, SSD1306_WHITE);
+    display.fillRect(0, 32, constrain(prog, 0, 128), 6, SSD1306_WHITE);
+    
+    display.setCursor(0, 42);
+    display.printf("LOAD: %d%% | V:%d\n", megaCong, vehicleCount);
+    
     if (emergencyActive) {
+        display.setCursor(0, 54);
         display.println("!! EMERGENCY !!");
-        display.println("CLEARING PATH");
+    } else if (violationDetected) {
+        display.setCursor(0, 54);
+        display.println("!! VIOLATION !!");
     }
+    
     display.display();
 }
 
@@ -140,10 +186,12 @@ void updateOLED() {
 //  Vision Intelligence (Pull Architecture)
 // ────────────────────────────────────────────────────────────
 void callRoboflow() {
+    if (WiFi.status() != WL_CONNECTED) return;
+    
     HTTPClient http;
-    // Step 1: Fetch Frame from Camera Node
     String captureUrl = "http://" + String(CAM_IP) + "/capture";
     http.begin(captureUrl);
+    http.setTimeout(3000);
     int httpCode = http.GET();
     
     if (httpCode == 200) {
@@ -156,7 +204,6 @@ void callRoboflow() {
             free(buffer);
             http.end();
 
-            // Step 2: Post to Roboflow
             String rfUrl = String("https://detect.roboflow.com/") + RF_MODEL_ID + "?api_key=" + RF_API_KEY + "&name=frame.jpg";
             http.begin(rfUrl);
             http.addHeader("Content-Type", "application/x-www-form-urlencoded");
@@ -170,20 +217,15 @@ void callRoboflow() {
                     String emType = "";
                     for (JsonObject pred : doc["predictions"].as<JsonArray>()) {
                         String cls = pred["class"].as<String>();
-                        if (pred["confidence"].as<float>() > 0.45) {
-                            if (cls == "car" || cls == "bus" || cls == "truck") v++;
+                        float conf = pred["confidence"].as<float>();
+                        if (conf > 0.45) {
+                            if (cls == "car" || cls == "bus" || cls == "truck" || cls == "vehicle") v++;
                             if (cls == "ambulance") emType = "AMBULANCE";
-                            if (cls == "fire brigade") emType = "FIRE_TRUCK";
+                            if (cls == "fire truck" || cls == "fire brigade") emType = "FIRE_TRUCK";
                         }
                     }
                     vehicleCount = v;
-                    if (emType != "") {
-                        forceEmergency(emType);
-                    } else {
-                        // Reset local flags if no emergency vehicle in this frame
-                        isAmbulance = false;
-                        isFireTruck = false;
-                    }
+                    if (emType != "") forceEmergency(emType);
                 }
             }
         }
@@ -204,9 +246,12 @@ void handleMqttCallback(char* topic, byte* payload, unsigned int length) {
             setSignal(msg);
         } else if (msg == "AUTO") {
             manualOverride = false;
+        } else if (msg == "ALERT_PATROL") {
+            violationDetected = true; // Use flags to trigger visual warning
         }
     } else if (String(topic) == topicEmergency && msg.indexOf("CLEAR") != -1) {
         emergencyActive = false;
+        violationDetected = false;
         isAmbulance = false;
         isFireTruck = false;
         setSignal("RED");
@@ -222,12 +267,17 @@ void readMegaSensors() {
             megaCong = doc["cong"];
             megaIR   = doc["ir"];
             megaPIR  = doc["pir"];
+            
+            // Security Logic: Movement during RED
+            if (signalState == "RED" && megaPIR && !violationDetected) {
+                reportViolation();
+            }
         }
     }
 }
 
 void publishTelemetry() {
-    StaticJsonDocument<256> doc;
+    StaticJsonDocument<512> doc;
     doc["junction"] = JUNCTION_ID;
     doc["vehicles"] = vehicleCount;
     doc["distance"] = megaDist;
@@ -236,10 +286,10 @@ void publishTelemetry() {
     doc["pir"] = megaPIR;
     doc["signal"] = signalState;
     doc["emergency"] = emergencyActive;
-    doc["ambulance"] = isAmbulance;
-    doc["fire_truck"] = isFireTruck;
+    doc["violation"] = violationDetected;
+    doc["uptime"]    = millis() / 1000;
     
-    char buf[256];
+    char buf[512];
     serializeJson(doc, buf);
     mqtt.publish(topicSensors, buf);
 }
@@ -258,23 +308,30 @@ void setup() {
     barrierServo.attach(SERVO_PIN);
     
     Wire.begin();
-    if (display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+        Serial.println(F("OLED failed"));
+    } else {
         display.clearDisplay();
-        display.setTextColor(WHITE);
+        display.setTextColor(SSD1306_WHITE);
         display.setTextSize(1);
-        display.println("SmartJunction v3.2");
-        display.println("Connecting WiFi...");
+        display.println("SMARTJUNCTION AI");
+        display.println("BOOTING...");
         display.display();
     }
 
+    WiFi.setAutoReconnect(true);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
     
     mqtt.setServer(MQTT_BROKER, MQTT_PORT);
     mqtt.setCallback(handleMqttCallback);
 }
 
 void loop() {
+    if (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        return;
+    }
+
     if (!mqtt.connected()) {
         if (mqtt.connect(String("Brain-" + String(JUNCTION_ID)).c_str())) {
             mqtt.subscribe(topicCmd);
@@ -286,39 +343,49 @@ void loop() {
 
     readMegaSensors();
 
-    // Signal Logic (Simple Cycle if no manual override)
+    // Signal Logic (Adaptive Cycle)
     if (!manualOverride && !emergencyActive) {
         static unsigned long lastCycle = 0;
-        unsigned long cycleDuration = 10000;
+        unsigned long greenTime = 8000;
+        unsigned long redTime   = 8000;
         
-        // Smart Adaptation: If congestion > 70%, double the green time
-        if (signalState == "GREEN" && megaCong > 70) cycleDuration = 20000;
+        // AI Weighting: Increase green duration if high congestion
+        if (megaCong > 60) greenTime = 15000;
+        if (megaCong > 85) greenTime = 25000;
+        
+        // Pedestrian Hold: If PIR active, don't switch from GREEN to YELLOW yet
+        bool pedWait = (signalState == "GREEN" && (megaPIR || megaIR));
 
-        if (millis() - lastCycle > cycleDuration) {
+        if (millis() - lastCycle > (signalState == "GREEN" ? greenTime : redTime) && !pedWait) {
             if (signalState == "RED") setSignal("GREEN");
             else if (signalState == "GREEN") setSignal("YELLOW");
-            else setSignal("RED");
+            else if (signalState == "YELLOW") setSignal("RED");
             lastCycle = millis();
         }
     }
 
-    // AI vision every 5s
+    // Vision Analysis (Smart Throttle)
     static unsigned long lastAI = 0;
-    if (millis() - lastAI > 5000) {
+    int aiInterval = emergencyActive ? 2000 : 6000; 
+    if (millis() - lastAI > aiInterval) {
         callRoboflow();
         lastAI = millis();
     }
 
-    // Handle Emergency Timeout
-    if (emergencyActive && (millis() - emergencyStart > 30000)) {
-        emergencyActive = false;
-        setSignal("RED");
-        Serial.println(F("[PROCESS] Normal traffic resumed"));
+    // Clear violation after some time
+    if (violationDetected && (millis() - lastSignalChange > 15000)) {
+        violationDetected = false;
     }
 
-    // Pub/UI every 2s
+    // Emergency Timeout (safety)
+    if (emergencyActive && (millis() - emergencyStart > 45000)) {
+        emergencyActive = false;
+        setSignal("RED");
+    }
+
+    // Performance UI
     static unsigned long lastLog = 0;
-    if (millis() - lastLog > 2000) {
+    if (millis() - lastLog > 1000) {
         publishTelemetry();
         updateOLED();
         lastLog = millis();

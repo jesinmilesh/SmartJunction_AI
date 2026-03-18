@@ -33,6 +33,10 @@
                 </div>
                 
                 <div class="system-status">
+                    <button id="webcam-toggle" class="hud-btn btn-a" style="margin-right: 15px; font-size: 0.7em; padding: 5px 10px;" onclick="toggleWebcam()">
+                        <span id="webcam-status-dot" class="status-dot offline"></span> 
+                        LOCAL WEBCAM: OFF
+                    </button>
                     <span class="status-dot online" id="status-dot"></span>
                     <span id="connection-status">LINK ACTIVE</span>
                 </div>
@@ -52,6 +56,8 @@
         <section class="main-viewport">
             <div class="video-frame">
                 <img id="stream-focus" src="" class="main-stream-img hidden">
+                <video id="local-video" class="main-stream-img hidden" autoplay playsinline muted style="object-fit:cover;"></video>
+                <canvas id="det-canvas" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:20;"></canvas>
                 <div class="camera-placeholder" id="placeholder-focus">
                     <i data-lucide="video-off"></i>
                     <p>// AWAITING SIGNAL...</p>
@@ -65,6 +71,11 @@
                 
                 <div class="overlay-dets" id="dets-focus">
                     <!-- AI detection labels -->
+                </div>
+
+                <div class="insights-hud" id="insights-panel">
+                    <h4>CORE_INTELLIGENCE</h4>
+                    <p id="insight-text">// SCANNING JUNCTION DATA...</p>
                 </div>
             </div>
 
@@ -143,6 +154,10 @@
             &copy; 2026 SMARTJUNCTION AI // CORE_NODE_DASHBOARD_STABLE_4.1
         </footer>
     </div>
+
+    <!-- Hidden Capture Utilities -->
+    <video id="hidden-video" style="display:none;" autoplay playsinline></video>
+    <canvas id="hidden-canvas" style="display:none;" width="640" height="480"></canvas>
 
     <!-- Interface Logic -->
     <script src="script.js"></script>

@@ -1193,8 +1193,11 @@
         Alerts</div>
     </div>
     <div class="nav-status">
+      <button id="webcam-toggle" class="nav-pill" style="background:#0a0f1c; color:var(--accent); border-color:var(--accent); margin-right:15px;" onclick="toggleWebcam()">
+        WEBCAM: OFF
+      </button>
       <div class="status-dot" id="conn-dot"></div>
-      <span id="conn-label">Connecting…</span>
+      <span id="conn-label">Live</span>
       <span style="margin:0 8px;color:var(--border)">|</span>
       <span id="clock" style="font-family:'JetBrains Mono',monospace;font-size:.78rem"></span>
     </div>
@@ -1399,6 +1402,27 @@
       showEmergencyBanner(ev.junction, ev.type);
     });
 
+    socket.on('vision_update', data => {
+        drawDetections(data.junction, data.detections);
+    });
+
+    function drawDetections(jct, detections) {
+        const canvas = document.getElementById(`det-canvas-${jct}`);
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        detections.forEach(det => {
+            const [x, y, w, h] = det.bbox;
+            const sx = canvas.width / 640; const sy = canvas.height / 480;
+            ctx.strokeStyle = '#388bfd'; ctx.lineWidth = 2;
+            ctx.strokeRect(x * sx, y * sy, w * sx, h * sy);
+            ctx.fillStyle = '#388bfd'; ctx.font = 'bold 8px Inter';
+            ctx.fillText(det.class.toUpperCase(), x * sx, y * sy - 4);
+        });
+    }
+
     function setConnected(ok) {
       const dot = document.getElementById('conn-dot');
       const label = document.getElementById('conn-label');
@@ -1540,6 +1564,8 @@
     <div class="jc-camera">
       <img id="cam-${jct}" src="/api/frame/${jct}" alt="${jct} live feed"
            onerror="this.style.opacity='.2'" style="opacity:.8">
+      <video id="vcam-${jct}" class="hidden" autoplay playsinline muted style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover;"></video>
+      <canvas id="det-canvas-${jct}" style="position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:5;"></canvas>
       <div class="cam-overlay"></div>
       <div class="det-badges" id="det-${jct}"></div>
       <div class="cam-label" id="cl-${jct}">LIVE ● ${jct}</div>
@@ -1672,14 +1698,14 @@
         csEl.className = 'cam-status ' + (s.cam_online ? 'live' : 'off');
       }
 
-      // Camera image refresh — always clear old timer before creating a new one
+      // Camera image refresh — match server FPS (5 FPS = 200ms)
       clearInterval(camRefreshTimers[jct]);
       camRefreshTimers[jct] = null;
-      if (s.cam_online) {
+      if (s.cam_online && !s._isVirtual) {
         camRefreshTimers[jct] = setInterval(() => {
           const img = document.getElementById(`cam-${jct}`);
           if (img) img.src = `/api/frame/${jct}?t=${Date.now()}`;
-        }, 1000);
+        }, 200);
       }
     }
 
@@ -1852,15 +1878,50 @@
     function setEl(id, val) { set(id, val); }
 
     // ─────────────────────────────────────────────────────────────
-    //  Auto-refresh state every 5 s (fallback polling)
+    //  Webcam Backup Protocol
     // ─────────────────────────────────────────────────────────────
-    setInterval(async () => {
-      try {
-        const res = await fetch('/api/state');
-        globalState = await res.json();
-        renderAll();
-      } catch (_) { }
-    }, 5000);
+    let webcamActive = false, webcamStream = null, webcamInterval = null;
+    const hiddenVideo = document.createElement('video');
+    const hiddenCanvas = document.createElement('canvas');
+    hiddenVideo.setAttribute('autoplay', '');
+    hiddenVideo.setAttribute('playsinline', '');
+    hiddenCanvas.width = 640; hiddenCanvas.height = 480;
+
+    async function toggleWebcam() {
+      const btn = document.getElementById('webcam-toggle');
+      const vcam = document.getElementById('vcam-J1');
+      const img = document.getElementById('cam-J1');
+
+      if (webcamActive) {
+        if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
+        clearInterval(webcamInterval);
+        webcamActive = false;
+        btn.innerHTML = 'WEBCAM: OFF';
+        vcam.classList.add('hidden');
+        img.classList.remove('hidden');
+      } else {
+        try {
+          webcamStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+          vcam.srcObject = webcamStream;
+          webcamActive = true;
+          btn.innerHTML = 'WEBCAM: LIVE';
+          vcam.classList.remove('hidden');
+          img.classList.add('hidden');
+          webcamInterval = setInterval(pushWebcamFrame, 200); // 5 FPS
+        } catch (e) {
+          toast('Camera access denied', 'error');
+        }
+      }
+    }
+
+    function pushWebcamFrame() {
+      if (!webcamActive || !socket.connected) return;
+      const ctx = hiddenCanvas.getContext('2d');
+      ctx.drawImage(hiddenVideo, 0, 0, 640, 480);
+      const dataUrl = hiddenCanvas.toDataURL('image/jpeg', 0.6);
+      // Push to junction J1 by default in dashboard (can be expanded)
+      socket.emit('push_frame', { junction: 'J1', image: dataUrl });
+    }
   </script>
 </body>
 

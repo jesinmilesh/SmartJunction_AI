@@ -10,7 +10,10 @@ const state = {
     allJunctions: {},
     connected: false,
     alerts: [],
-    junctions: ['J1', 'J2', 'J3', 'J4']
+    junctions: ['J1', 'J2', 'J3', 'J4'],
+    webcamActive: false,
+    webcamStream: null,
+    webcamInterval: null
 };
 
 // --- DOM Cache (Focus HUD) ---
@@ -31,8 +34,25 @@ const elements = {
     tsFocus: document.getElementById('ts-focus'),
     barFocus: document.getElementById('bar-focus'),
     dangerHud: document.getElementById('danger-hud'),
-    detsFocus: document.getElementById('dets-focus')
+    detsFocus: document.getElementById('dets-focus'),
+    
+    hiddenCanvas: document.getElementById('hidden-canvas'),
+    insightsText: document.getElementById('insight-text'),
+    
+    // New Real-time Overlays
+    localVideo: document.getElementById('local-video'),
+    detCanvas: document.getElementById('det-canvas')
 };
+
+// High-fidelity SFX for Cinematic Feedback
+const sfx = {
+    beep: new Audio('https://www.soundjay.com/buttons/sounds/button-37.mp3'),
+    alert: new Audio('https://www.soundjay.com/buttons/sounds/beep-01a.mp3'),
+    emergency: new Audio('https://www.soundjay.com/buttons/sounds/beep-04.mp3')
+};
+sfx.beep.volume = 0.2;
+sfx.alert.volume = 0.3;
+sfx.emergency.volume = 0.4;
 
 // --- Initialization ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -98,6 +118,45 @@ function initSocket() {
         if (state.alerts.length > 50) state.alerts.pop();
         addLogEntry(`${getAlertSymbol(alert.type)} ${alert.type} @ ${alert.source}: ${alert.details.toUpperCase()}`);
     });
+
+    state.socket.on('vision_update', (data) => {
+        if (data.junction === state.selectedJct) {
+            drawDetections(data.detections);
+            // Low-latency stat update
+            elements.svFocus.textContent = data.v || 0;
+            elements.spFocus.textContent = data.p || 0;
+            elements.tsFocus.textContent = `${data.t || 0}%`;
+        }
+    });
+}
+
+function drawDetections(detections) {
+    const canvas = elements.detCanvas;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    
+    // Ensure canvas internal resolution matches display size
+    canvas.width = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
+    
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    detections.forEach(det => {
+        const [x, y, w, h] = det.bbox;
+        const cls = det.class.toUpperCase();
+        
+        // Scale normalized coords (0-640) to canvas size
+        const scaleX = canvas.width / 640;
+        const scaleY = canvas.height / 480;
+        
+        ctx.strokeStyle = '#06b6d4';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x * scaleX, y * scaleY, w * scaleX, h * scaleY);
+        
+        ctx.fillStyle = '#06b6d4';
+        ctx.font = 'bold 10px JetBrains Mono';
+        ctx.fillText(cls, x * scaleX, y * scaleY - 5);
+    });
 }
 
 /**
@@ -138,13 +197,40 @@ function updateUI() {
     if (data.accident) detHtml += '<span class="det" style="background:#fff; color:#000;">⚠️ INCIDENT_ALERT</span>';
     elements.detsFocus.innerHTML = detHtml;
 
+    // AI Insight Dashboard Logic
+    updateAIInsights(data);
+
+    // Violation Strobe
+    if (data.violation) {
+        document.body.classList.add('violation-active');
+    } else {
+        document.body.classList.remove('violation-active');
+    }
+
     // Emergency HUD Pulse
     const anyEm = Object.values(state.allJunctions).some(d => d.emergency || d.ambulance || d.fire_truck);
     if (anyEm) {
         document.body.classList.add('emergency-active');
+        if (Math.random() > 0.96) sfx.emergency.play(); // Occasional warning chime
     } else {
         document.body.classList.remove('emergency-active');
     }
+}
+
+/**
+ * AI Insight Engine
+ */
+function updateAIInsights(data) {
+    if (!elements.insightsText) return;
+    let advice = "// SYSTEM OPERATIONAL. FLOW STEADY.";
+    
+    if (data.traffic_score > 85) advice = `// LOAD CRITICAL!! Recommendation: Extend GREEN for ${state.selectedJct}.`;
+    else if (data.ambulance || data.fire_truck) advice = `// EMERGENCY PRIORITY detected. Lane clearing active.`;
+    else if (data.violation) advice = `// SECURITY BREACH!! Illegal movement at ${state.selectedJct}.`;
+    else if (data.persons > 0) advice = `// PEDESTRIAN DETECTED. Holding signal for safety...`;
+    else if (data.traffic_score < 15 && data.signal === 'RED') advice = `// LOW LOAD. Switching likely for efficiency.`;
+
+    elements.insightsText.textContent = advice;
 }
 
 /**
@@ -159,14 +245,17 @@ function sendCommand(target, action) {
     if (target === 'SELECTED') {
         state.socket.emit('cmd', { junction: state.selectedJct, cmd: action });
         addLogEntry(`>> CMD_SENT: ${state.selectedJct} ← ${action}`);
+        sfx.beep.play();
     } else if (target === 'ALL') {
         state.junctions.forEach(j => {
             state.socket.emit('cmd', { junction: j, cmd: action });
         });
         addLogEntry(`>> GLOBAL_OVERRIDE_SENT: CITY ← ${action}`);
+        sfx.alert.play();
     } else if (target === 'GLOBAL' && action === 'CLEAR_EMERGENCY') {
         state.socket.emit('emergency_clear');
         addLogEntry('>> ✅ RESET: ALL EMERGENCY TRIGGERS CLEARED');
+        sfx.beep.play();
     }
 }
 
@@ -218,4 +307,66 @@ function startSimulation() {
         });
         updateUI();
     }, 2000);
+}
+
+/**
+ * Webcam Alternative Protocol
+ */
+async function toggleWebcam() {
+    if (state.webcamActive) {
+        // Stop Webcam
+        if (state.webcamStream) {
+            state.webcamStream.getTracks().forEach(track => track.stop());
+        }
+        clearInterval(state.webcamInterval);
+        state.webcamActive = false;
+        state.webcamStream = null;
+        
+        elements.localVideo.classList.add('hidden');
+        elements.streamFocus.classList.remove('hidden');
+        elements.webcamBtn.innerHTML = '<span id="webcam-status-dot" class="status-dot offline"></span> LOCAL WEBCAM: OFF';
+        addLogEntry('>> ACCESS_TERMINATED: LOCAL_WEB_CAMERA_OFF');
+        
+        // Clear detections
+        drawDetections([]);
+    } else {
+        // Start Webcam
+        try {
+            const constraints = { 
+                video: { width: 640, height: 480, facingMode: "environment" } 
+            };
+            
+            addLogEntry('>> REQUESTING_CAMERA_ACCESS...');
+            state.webcamStream = await navigator.mediaDevices.getUserMedia(constraints);
+            elements.localVideo.srcObject = state.webcamStream;
+            state.webcamActive = true;
+            
+            elements.localVideo.classList.remove('hidden');
+            elements.streamFocus.classList.add('hidden');
+            elements.placeholderFocus.classList.add('hidden');
+
+            elements.webcamBtn.innerHTML = '<span id="webcam-status-dot" class="status-dot online"></span> LOCAL WEBCAM: ACTIVE';
+            addLogEntry('>> ✓ ACCESS_GRANTED: STREAMING LOCAL_FEED TO AI_CORE');
+
+            // Real-time Push: 5 FPS (matches server INFER_FPS)
+            state.webcamInterval = setInterval(captureAndPushFrame, 200);
+        } catch (err) {
+            addLogEntry(`>> ! ERROR: CAMERA_ACCESS_DENIED [${err.message}]`);
+            console.error(err);
+        }
+    }
+}
+
+function captureAndPushFrame() {
+    if (!state.connected || !state.webcamActive) return;
+
+    const ctx = elements.hiddenCanvas.getContext('2d');
+    // Draw from local-video instead of hidden video (though they are same stream)
+    ctx.drawImage(elements.localVideo, 0, 0, 640, 480);
+    const dataUrl = elements.hiddenCanvas.toDataURL('image/jpeg', 0.5); // Slightly lower quality for speed
+    
+    state.socket.emit('push_frame', {
+        junction: state.selectedJct,
+        image: dataUrl
+    });
 }
