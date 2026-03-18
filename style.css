@@ -1,0 +1,377 @@
+/**
+ * SmartJunction AI - Master HUD Dashboard CSS (v4.1)
+ * Optimized for Futuristic Terminal Aesthetics & Multi-Platform Support
+ */
+
+ @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;600&display=swap');
+
+ :root {
+    /* Core Palette */
+    --bg-deep: #020408;
+    --bg-surface: rgba(10, 15, 25, 0.75);
+    --bg-glass: rgba(15, 23, 42, 0.5);
+    
+    /* Accents */
+    --cyan-glow: #06b6d4;
+    --cyan-dim: rgba(6, 182, 212, 0.2);
+    --emerald-glow: #10b981;
+    --ruby-glow: #ef4444;
+    --gold-glow: #f59e0b;
+    --indigo-glow: #6366f1;
+    
+    /* Text */
+    --text-high: #f8fafc;
+    --text-mid: #94a3b8;
+    --text-low: #475569;
+    
+    --glass-blur: blur(20px);
+    --border-light: rgba(255, 255, 255, 0.06);
+    --border-accent: rgba(6, 182, 212, 0.4);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    background-color: var(--bg-deep);
+    color: var(--text-high);
+    font-family: 'Outfit', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+    background: 
+        radial-gradient(circle at 0% 0%, rgba(6, 182, 212, 0.08) 0%, transparent 50%),
+        radial-gradient(circle at 100% 100%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+        var(--bg-deep);
+}
+
+/* Futuristic Scanline Effect Overlay */
+body::after {
+    content: " ";
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.01), rgba(0, 255, 0, 0), rgba(0, 0, 255, 0.01));
+    background-size: 100% 3px, 3px 100%;
+    z-index: 1000;
+    pointer-events: none;
+    opacity: 0.25;
+}
+
+.app-container {
+    padding: 1.5rem 2.5rem;
+    max-width: 1800px;
+    margin: 0 auto;
+    position: relative;
+    z-index: 10;
+}
+
+/* Cinematic Header */
+.main-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 2rem; padding: 1rem 0;
+    border-bottom: 1px solid var(--border-light);
+    animation: fadeInDown 0.8s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.logo-area { display: flex; align-items: center; gap: 1.5rem; }
+.logo-area h1 { 
+    font-family: 'Orbitron', sans-serif;
+    font-size: 2rem; font-weight: 900; 
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    background: linear-gradient(to right, #fff, var(--cyan-glow));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.pulse-node {
+    width: 14px; height: 14px;
+    background: var(--cyan-glow);
+    border-radius: 50%;
+    box-shadow: 0 0 25px var(--cyan-glow);
+    animation: core-pulse 2.5s infinite;
+}
+
+@keyframes core-pulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 10px var(--cyan-glow); }
+    50% { transform: scale(1.3); box-shadow: 0 0 30px var(--cyan-glow); }
+}
+
+.header-controls { display: flex; align-items: center; gap: 2.5rem; }
+.system-status { display: flex; align-items: center; gap: 1.5rem; }
+.webcam-controls { display: flex; align-items: center; gap: 0.5rem; }
+.connection-hub { display: flex; align-items: center; gap: 0.8rem; }
+
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.status-dot.online { background: var(--emerald-glow); box-shadow: 0 0 10px var(--emerald-glow); animation: glow-pulse 2s infinite; }
+.status-dot.offline { background: var(--ruby-glow); }
+
+@keyframes glow-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.9); }
+}
+
+.selector-hud {
+    background: var(--bg-surface);
+    padding: 0.6rem 1.8rem;
+    border-radius: 4px;
+    border-left: 4px solid var(--cyan-glow);
+    display: flex; align-items: center; gap: 1.2rem;
+    backdrop-filter: var(--glass-blur);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+
+.selector-hud label { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--cyan-glow); font-weight: 800; letter-spacing: 0.1em; }
+.selector-hud select {
+    background: transparent; border: none; color: white;
+    font-family: 'Orbitron', sans-serif; font-size: 0.95rem; font-weight: 800;
+    cursor: pointer; outline: none;
+}
+
+/* Global HUD Quick Action Strip */
+.global-hud-bar {
+    display: flex; align-items: center; gap: 2rem;
+    margin-bottom: 2rem;
+    padding: 1rem 2.5rem;
+    background: var(--bg-glass);
+    border: 1px solid var(--border-light);
+    border-radius: 10px;
+    animation: fadeIn 1.5s ease-out;
+}
+
+.hud-label { 
+    font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; 
+    color: var(--cyan-glow); letter-spacing: 0.25em; font-weight: 800;
+}
+
+.hud-btn {
+    padding: 0.6rem 1.8rem;
+    background: transparent;
+    border: 1px solid var(--border-accent);
+    color: var(--text-high);
+    font-size: 0.72rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    cursor: pointer; transition: all 0.3s cubic-bezier(0.19, 1, 0.22, 1);
+    display: flex; align-items: center; gap: 0.75rem;
+    border-radius: 4px;
+}
+
+.hud-btn i, .hud-btn svg { width: 14px; height: 14px; }
+
+.hud-btn:hover { background: var(--cyan-dim); transform: translateY(-2px); border-color: var(--cyan-glow); color: var(--cyan-glow); box-shadow: 0 0 15px var(--cyan-dim); }
+
+.btn-g:hover { border-color: var(--emerald-glow); color: var(--emerald-glow); background: rgba(16, 185, 129, 0.1); }
+.btn-r:hover { border-color: var(--ruby-glow); color: var(--ruby-glow); background: rgba(239, 68, 68, 0.1); }
+.btn-a:hover { border-color: var(--gold-glow); color: var(--gold-glow); background: rgba(245, 158, 11, 0.1); }
+.btn-em { border-color: rgba(239, 68, 68, 0.5); color: #ef4444; }
+.btn-em:hover { border-color: var(--ruby-glow); background: var(--ruby-glow); color: white; box-shadow: 0 0 25px var(--ruby-glow); }
+
+/* Main Dashboard Grid */
+.main-viewport {
+    display: grid; grid-template-columns: 1fr 420px;
+    gap: 2.5rem; margin-bottom: 3rem;
+    animation: fadeInUp 1s ease-out;
+}
+
+.video-frame {
+    position: relative;
+    background: #000;
+    aspect-ratio: 16/9;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border-light);
+    box-shadow: 0 25px 80px rgba(0,0,0,0.6);
+}
+
+/* Decorative Framing HUD Corners */
+.video-frame::before, .video-frame::after {
+    content: ""; position: absolute; width: 40px; height: 40px; z-index: 25;
+}
+.video-frame::before { top: 15px; left: 15px; border-top: 3px solid var(--cyan-glow); border-left: 3px solid var(--cyan-glow); }
+.video-frame::after { bottom: 15px; right: 15px; border-bottom: 3px solid var(--cyan-glow); border-right: 3px solid var(--cyan-glow); }
+
+.scanline {
+    position: absolute; top: 0; left: 0; width: 100%; height: 2px;
+    background: rgba(6, 182, 212, 0.4);
+    box-shadow: 0 0 10px var(--cyan-glow);
+    z-index: 22; pointer-events: none;
+    animation: scanmove 4s linear infinite;
+}
+
+.grid-overlay {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    background-image: 
+        linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: 30px 30px;
+    z-index: 21; pointer-events: none;
+}
+
+@keyframes scanmove {
+    0% { top: -2px; }
+    100% { top: 100%; }
+}
+
+.main-stream-img { width: 100%; height: 100%; object-fit: contain; }
+
+.cam-hud-overlay {
+    position: absolute; top: 25px; right: 25px;
+    background: rgba(0,0,0,0.7); padding: 0.6rem 1.2rem;
+    border-radius: 4px; border-right: 3px solid var(--ruby-glow);
+    font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; letter-spacing: 0.05em;
+    backdrop-filter: blur(4px);
+}
+
+.rec-dot {
+    display: inline-block; width: 10px; height: 10px; 
+    background: var(--ruby-glow); border-radius: 50%;
+    margin-right: 10px; animation: rec-pulse 1s steps(2) infinite;
+}
+
+@keyframes rec-pulse { 0%, 100% { opacity: 1; filter: drop-shadow(0 0 5px var(--ruby-glow)); } 50% { opacity: 0; } }
+
+/* Advanced HUD Overlays */
+.insights-hud {
+    position: absolute; bottom: 25px; left: 25px;
+    background: rgba(10, 15, 25, 0.85);
+    border-left: 3px solid var(--indigo-glow);
+    padding: 0.8rem 1.2rem; border-radius: 4px;
+    width: 250px; backdrop-filter: blur(8px);
+    animation: slideInLeft 0.6s ease; z-index: 30;
+}
+.insights-hud h4 { font-size: 0.6rem; color: var(--indigo-glow); letter-spacing: 0.15em; margin-bottom: 0.4rem; font-family: 'JetBrains Mono', monospace; }
+.insights-hud p { font-size: 0.75rem; color: var(--text-high); line-height: 1.3; font-weight: 500; font-family: 'Outfit', sans-serif; }
+
+@keyframes slideInLeft { from { transform: translateX(-50px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* Violation Strobe Master */
+body.violation-active .video-frame {
+    animation: violation-flash 0.8s infinite;
+}
+@keyframes violation-flash {
+    0%, 100% { border-color: var(--cyan-glow); }
+    50% { border-color: var(--ruby-glow); box-shadow: 0 0 40px rgba(239, 68, 68, 0.3); }
+}
+
+/* Focused Telemetry Panels */
+.side-hud { display: flex; flex-direction: column; gap: 2rem; }
+
+.hud-card {
+    background: var(--bg-surface);
+    padding: 1.8rem; border-radius: 12px;
+    border: 1px solid var(--border-light);
+    backdrop-filter: var(--glass-blur);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+}
+
+.hud-card h3 { 
+    font-family: 'Orbitron', sans-serif; font-size: 0.85rem; 
+    color: var(--cyan-glow); margin-bottom: 1.8rem; 
+    display: flex; align-items: center; gap: 0.8rem;
+    letter-spacing: 0.08em;
+}
+
+/* Lucide Icon Selector Fix: Supports both <i> and converted <svg> */
+.hud-card h3 i, .hud-card h3 svg, .hud-card h3 .lucide { width: 18px; height: 18px; flex-shrink: 0; }
+
+.stat-grid { display: grid; gap: 1.2rem; }
+.stat-row { 
+    display: flex; justify-content: space-between; align-items: flex-end;
+    padding-bottom: 0.6rem; border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.stat-tag { font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; color: var(--text-mid); text-transform: uppercase; font-weight: 600; }
+.stat-val { font-family: 'Orbitron', sans-serif; font-size: 1.8rem; font-weight: 900; color: white; text-shadow: 0 0 10px var(--cyan-dim); }
+
+/* Control Interface HUD */
+.control-hud { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+.ctrl-hud-btn {
+    padding: 1.2rem 0; background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border-light); border-radius: 8px;
+    color: var(--text-mid); font-family: 'Orbitron', sans-serif; font-size: 0.68rem;
+    cursor: pointer; transition: 0.35s cubic-bezier(0.165, 0.84, 0.44, 1);
+    display: flex; flex-direction: column; align-items: center; gap: 0.75rem;
+    font-weight: 800; letter-spacing: 0.1em;
+}
+
+.ctrl-hud-btn svg, .ctrl-hud-btn .lucide { width: 20px; height: 20px; }
+
+.ctrl-hud-btn:hover { background: var(--cyan-dim); border-color: var(--cyan-glow); color: white; transform: scale(1.05); box-shadow: 0 0 15px var(--cyan-dim); }
+
+/* Meter Styling */
+.meter-label { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-mid); margin-bottom: 1rem; }
+.meter-track { height: 16px; background: rgba(0,0,0,0.4); border-radius: 4px; overflow: hidden; border: 1px solid var(--border-light); }
+.meter-fill { height: 100%; transition: width 1s cubic-bezier(0.4, 0, 0.2, 1); width: 0%; border-radius: 2px; }
+
+/* System Terminal Logs */
+.terminal-row { display: grid; grid-template-columns: 2fr 1fr; gap: 2.5rem; }
+
+.hud-terminal {
+    height: 280px; background: rgba(0,0,0,0.5);
+    border-radius: 12px; border: 1px solid var(--border-light);
+    padding: 1.5rem; font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem; overflow-y: auto; color: var(--emerald-glow);
+    scrollbar-width: thin; scrollbar-color: var(--cyan-glow) transparent;
+}
+
+.term-line { margin-bottom: 0.6rem; opacity: 0.95; line-height: 1.4; display: flex; }
+.term-line .ts { color: var(--text-low); margin-right: 1.2rem; min-width: 80px; }
+
+/* Emergency Master HUD Activation */
+.emergency-hud {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    border: 8px solid var(--ruby-glow);
+    background: radial-gradient(circle, transparent 30%, rgba(239, 68, 68, 0.2) 100%);
+    pointer-events: none; opacity: 0; transition: 0.8s ease; z-index: 1000;
+}
+
+body.emergency-active .emergency-hud { opacity: 1; animation: hud-danger 1.5s infinite running; }
+
+@keyframes hud-danger { 0%, 100% { border-color: var(--ruby-glow); opacity: 1; } 50% { border-color: transparent; opacity: 0.6; } }
+
+/* Global Animations */
+@keyframes fadeInDown { from { opacity: 0; transform: translateY(-30px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* Side Monitor Hub */
+.mobile-monitor-card {
+    margin-top: auto; cursor: pointer; border-style: dashed; border-color: rgba(6, 182, 212, 0.4);
+}
+.mobile-monitor-card:hover { border-style: solid; background: rgba(6, 182, 212, 0.1); }
+
+.mini-stream-box {
+    width: 100%; height: 120px; background: #000; border-radius: 4px; overflow: hidden;
+    position: relative; display: flex; align-items: center; justify-content: center;
+}
+.mini-stream { width: 100%; height: 100%; object-fit: cover; }
+.mini-error {
+    display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+    color: var(--text-low); font-size: 0.65rem;
+}
+.mini-error i { width: 20px; height: 20px; opacity: 0.5; }
+
+.hidden { display: none !important; }
+
+/* Responsive Media Queries */
+@media (max-width: 1400px) {
+    .main-viewport { grid-template-columns: 1fr; }
+    .side-hud { flex-direction: row; flex-wrap: wrap; }
+    .hud-card { flex: 1; min-width: 300px; }
+}
+
+@media (max-width: 1024px) {
+    .app-container { padding: 1rem; }
+    .terminal-row { grid-template-columns: 1fr; }
+    .header-controls { flex-direction: column; align-items: flex-end; gap: 1rem; }
+    .logo-area h1 { font-size: 1.5rem; }
+}
+
+@media (max-width: 600px) {
+    .control-hud { grid-template-columns: 1fr; }
+    .stat-val { font-size: 1.4rem; }
+}
+
+/* Scrollbar Engineering */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+::-webkit-scrollbar-thumb { background: var(--cyan-glow); border-radius: 10px; border: 1px solid var(--bg-deep); }
+::-webkit-scrollbar-thumb:hover { background: var(--text-high); }
