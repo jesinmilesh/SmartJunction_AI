@@ -82,7 +82,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
-          cache-dependency-path: './edge_ai_server/package-lock.json'
+          cache-dependency-path: 'edge_ai_server/package-lock.json'
 
       - name: Verify Edge AI Server Integrity
         run: |
