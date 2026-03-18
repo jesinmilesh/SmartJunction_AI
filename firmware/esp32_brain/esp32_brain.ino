@@ -35,8 +35,8 @@ const char* CAM_IP         = "192.168.1.102";  // IP of the ESP32-CAM (Node-J1)
 
 // Roboflow credentials
 const char* RF_API_KEY     = "x4eWsXXfGZUxZ2PrVifr"; 
-const char* RF_MODEL_ID    = "smartjunction-traffic/1"; 
-// Note: Ensure your Roboflow model includes "ambulance" and "fire brigade" classes.
+const char* RF_MODEL_ID    = "smartjunction-traffic/3"; 
+// Note: Ensure your Roboflow model includes "ambulance" and "fire truck" classes.
 
 // Hardware Pins (Standard Dev Module)
 #define SERIAL2_RX  16
@@ -90,22 +90,10 @@ void setSignal(String state) {
     signalState = (state == "EMERGENCY") ? "EMERGENCY" : state;
     lastSignalChange = millis();
     
-    // Physical Signals
+    // Signal Indication LEDs
     digitalWrite(RED_LED, (state == "RED" ? HIGH : LOW));
     digitalWrite(YELLOW_LED, (state == "YELLOW" ? HIGH : LOW));
     digitalWrite(GREEN_LED, (state == "GREEN" || state == "EMERGENCY" ? HIGH : LOW));
-    
-    // Buzzer Logic
-    if (state == "EMERGENCY") {
-        // High frequency continuous for emergency
-        analogWrite(BUZZER_PIN, 200); 
-    } else if (state == "GREEN" && (megaPIR || megaIR)) {
-        // Warning beep if pedestrians are nearby while shifting
-        tone(BUZZER_PIN, 1000, 200);
-    } else {
-        noTone(BUZZER_PIN);
-        analogWrite(BUZZER_PIN, 0);
-    }
     
     if (state == "GREEN" || state == "EMERGENCY") {
         barrierServo.write(90); // Open
@@ -381,6 +369,26 @@ void loop() {
     if (emergencyActive && (millis() - emergencyStart > 45000)) {
         emergencyActive = false;
         setSignal("RED");
+    }
+
+    // --- Acoustic Navigation Protocol (Buzzer) ---
+    if (emergencyActive) {
+        if (isAmbulance) {
+            // Rapid Hi-Lo Siren (Ambulance)
+            tone(BUZZER_PIN, (millis() % 400 < 200) ? 1100 : 800);
+        } else if (isFireTruck) {
+            // Broad Frequency Sweep (Fire Truck)
+            int sweep = 400 + (millis() % 1000) * 1.5;
+            tone(BUZZER_PIN, sweep > 1500 ? 1500 : sweep);
+        } else {
+            tone(BUZZER_PIN, 1000); 
+        }
+    } else if (signalState == "GREEN" && (megaPIR || megaIR)) {
+        // Warning beacon for near-miss pedestrian detection
+        if (millis() % 2000 < 100) tone(BUZZER_PIN, 1200);
+        else noTone(BUZZER_PIN);
+    } else {
+        noTone(BUZZER_PIN);
     }
 
     // Performance UI

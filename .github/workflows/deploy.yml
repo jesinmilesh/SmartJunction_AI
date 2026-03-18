@@ -2,16 +2,15 @@ name: SmartJunction AI Deployment
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
 
 permissions:
   contents: write
 
 jobs:
+  # 🏆 Job 1: High-Performance Firmware Validation
   arduino-build:
     runs-on: ubuntu-latest
     steps:
@@ -21,20 +20,28 @@ jobs:
       - name: Setup Arduino CLI
         uses: arduino/setup-arduino-cli@v2
 
+      - name: Cache Arduino Core & Libs
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.arduino15/packages
+            ~/Arduino/libraries
+          key: ${{ runner.os }}-arduino-${{ hashFiles('**/*.ino') }}
+          restore-keys: ${{ runner.os }}-arduino-
+
       - name: Install Board Cores
         run: |
           arduino-cli core update-index
-          arduino-cli core install arduino:avr
+          arduino-cli core install arduino:avr --additional-urls https://downloads.arduino.cc/packages/package_index.json
+          
+          # ESP32 Ecosystem Setup
+          arduino-cli core update-index --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core install esp32:esp32 --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
 
-          arduino-cli core update-index \
-            --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-
-          arduino-cli core install esp32:esp32 \
-            --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-
-      - name: Install Libraries
+      - name: Install Mission-Critical Libraries
         run: |
-          arduino-cli lib install "ArduinoJson"
+          # Pin ArduinoJson to v6 for legacy compatibility with StaticJsonDocument syntax
+          arduino-cli lib install "ArduinoJson@6.21.3"
           arduino-cli lib install "PubSubClient"
           arduino-cli lib install "ESP32Servo"
           arduino-cli lib install "NewPing"
@@ -42,40 +49,61 @@ jobs:
           arduino-cli lib install "Adafruit GFX Library"
           arduino-cli lib install "Adafruit SSD1306"
 
-      - name: Compile Arduino Mega Sketch
+      - name: Verify "Master Node" (Arduino Mega)
         run: |
-          arduino-cli compile \
-            --fqbn arduino:avr:mega \
-            firmware/mega_sensors/mega_sensors.ino
+          arduino-cli compile --fqbn arduino:avr:mega firmware/mega_sensors/mega_sensors.ino
 
-      # BUG 1 FIXED: was esp32:esp32:esp32cam (CAM board) — brain needs esp32:esp32:esp32
-      # BUG 3 FIXED: added --additional-urls so the esp32 core is actually found
-      - name: Compile ESP32 Brain Sketch
+      - name: Verify "Cognitive Node" (ESP32 Brain)
         run: |
           arduino-cli compile \
             --fqbn esp32:esp32:esp32 \
             --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json \
             firmware/esp32_brain/esp32_brain.ino
 
-      # Optional: also compile the CAM sketch separately if you have it
-      - name: Compile ESP32-CAM Sketch
+      - name: Verify "Vision Node" (ESP32-CAM)
         run: |
           arduino-cli compile \
             --fqbn esp32:esp32:esp32cam \
             --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json \
             firmware/esp32cam_stream/esp32cam_stream.ino
 
+  # 🏆 Job 2: Edge Server Syntax & Dependency Matrix
+  server-verification:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          cache-dependency-path: './edge_ai_server/package-lock.json'
+
+      - name: Verify Edge AI Server Integrity
+        run: |
+          cd edge_ai_server
+          npm install --no-audit
+          node --check server.js
+          node --check download-model.js
+
+  # 🏆 Job 3: Dashboard Cloud Deployment
   web-deploy:
     runs-on: ubuntu-latest
-    needs: arduino-build
+    needs: [arduino-build, server-verification]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Deploy Live Dashboard to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./frontend
           force_orphan: true
+          commit_message: "🚀 Production Deployment: Urban City Dashboard update"

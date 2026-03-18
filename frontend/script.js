@@ -41,7 +41,8 @@ const elements = {
     
     // New Real-time Overlays
     localVideo: document.getElementById('local-video'),
-    detCanvas: document.getElementById('det-canvas')
+    detCanvas: document.getElementById('det-canvas'),
+    webcamBtn: document.getElementById('webcam-toggle')
 };
 
 // High-fidelity SFX for Cinematic Feedback
