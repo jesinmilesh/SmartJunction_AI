@@ -10,7 +10,7 @@ const state = {
     allJunctions: {},
     connected: false,
     alerts: [],
-    junctions: ['J1', 'J2', 'J3', 'J4', 'MOBILE_CAM'],
+    junctions: ['J1', 'J2', 'J3', 'MOBILE_CAM'],
     webcamActive: false,
     webcamStream: null,
     webcamInterval: null,
@@ -29,8 +29,8 @@ const elements = {
     metaFocus: document.getElementById('meta-focus'),
     streamFocus: document.getElementById('stream-focus'),
     placeholderFocus: document.getElementById('placeholder-focus'),
-    svFocus: document.getElementById('sv-focus'),
-    spFocus: document.getElementById('sp-focus'),
+    svFocus: document.getElementById('count-v'),
+    spFocus: document.getElementById('count-p'),
     sdFocus: document.getElementById('sd-focus'),
     tsFocus: document.getElementById('ts-focus'),
     barFocus: document.getElementById('bar-focus'),
@@ -128,18 +128,27 @@ function initSocket() {
 
     state.socket.on('vision_update', (data) => {
         if (data.junction === state.selectedJct) {
-            drawDetections(data.detections);
-            
-            // SYNCHRONIZED REFRESH: Update the image exactly when detections arrive
-            // This ensures bounding boxes perfectly match current traffic state
-            if (!state.webcamActive) {
-                elements.streamFocus.src = `http://${window.location.hostname}:5000/api/frame/${state.selectedJct}?t=${Date.now()}`;
+            // 1. Stage 1: Immediate Frame Refresh (High Speed)
+            if (!state.webcamActive && data.image) {
+                const blob = new Blob([data.image], { type: 'image/jpeg' });
+                const url = URL.createObjectURL(blob);
+                elements.streamFocus.onload = () => URL.revokeObjectURL(url);
+                elements.streamFocus.src = url;
+                elements.streamFocus.classList.remove('hidden');
+                elements.placeholderFocus.classList.add('hidden');
             }
 
-            // Low-latency stat update
-            elements.svFocus.textContent = data.v || 0;
-            elements.spFocus.textContent = data.p || 0;
-            elements.tsFocus.textContent = `${data.t || 0}%`;
+            // 2. Stage 2: AI Detections Overlay (Async)
+            if (data.detections) {
+               drawDetections(data.detections);
+            }
+
+            // 3. Low-latency stat update
+            if (data.v !== undefined) {
+               elements.svFocus.textContent = data.v.toString().padStart(2, '0');
+               elements.spFocus.textContent = data.p.toString().padStart(2, '0');
+               elements.tsFocus.textContent = `${data.t || 0}%`;
+            }
         }
     });
 }
@@ -181,9 +190,19 @@ function updateUI() {
     if (!data) return;
 
     // Data Telemetry
-    elements.svFocus.textContent = data.vehicles || 0;
-    elements.spFocus.textContent = data.persons || 0;
+    elements.svFocus.textContent = data.vehicles !== undefined ? data.vehicles.toString().padStart(2, '0') : '00';
+    elements.spFocus.textContent = data.persons !== undefined ? data.persons.toString().padStart(2, '0') : '00';
     elements.sdFocus.textContent = (data.dist === undefined || data.dist === 999) ? '--' : `${data.dist}`;
+    
+    // AI Signal Visualization
+    const aiSigVal = document.getElementById('ai-signal-val');
+    const combinedSig = data.ai_signal || data.signal || 'OFFLINE';
+    aiSigVal.textContent = combinedSig.toUpperCase();
+    if (combinedSig === 'GREEN') aiSigVal.style.color = 'var(--emerald-glow)';
+    else if (combinedSig === 'YELLOW') aiSigVal.style.color = 'var(--gold-glow)';
+    else if (combinedSig === 'RED') aiSigVal.style.color = 'var(--ruby-glow)';
+    else aiSigVal.style.color = 'var(--text-low)';
+
     elements.tsFocus.textContent = `${(data.traffic_score || 0)}%`;
     
     const score = data.traffic_score || 0;

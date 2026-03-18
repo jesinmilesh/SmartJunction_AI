@@ -44,7 +44,7 @@ const MQTT_PORT   = parseInt(process.env.MQTT_PORT   || '1883', 10);
 const WEB_PORT    = parseInt(process.env.WEB_PORT    || '5000', 10);
 const YOLO_MODEL  = process.env.YOLO_MODEL  || path.join(__dirname, 'yolov8n.onnx');
 const CONF_THRESH = parseFloat(process.env.CONF_THRESH || '0.45');
-const INFER_MS    = Math.round(1000 / parseFloat(process.env.INFER_FPS || '2'));
+const INFER_MS    = Math.round(1000 / parseFloat(process.env.INFER_FPS || '8')); // Bumped to 8 FPS for fluid motion
 
 // Roboflow Cloud Intelligence (Dataset v3)
 const RF_API_KEY  = process.env.ROBOFLOW_API_KEY;
@@ -57,10 +57,9 @@ const EMERGENCY_BROADCAST_INTERVAL = 10000;
 
 // Junction ID → camera IP mapping
 const JUNCTIONS = {
-  J1: process.env.J1_CAM_IP || '192.168.1.101',
-  J2: process.env.J2_CAM_IP || '192.168.1.102',
-  J3: process.env.J3_CAM_IP || '192.168.1.103',
-  J4: process.env.J4_CAM_IP || '192.168.1.104',
+  J1: process.env.J1_CAM_IP || '10.152.59.144:8080',
+  J2: process.env.J2_CAM_IP || '10.152.59.219:8080',
+  J3: process.env.J3_CAM_IP || '10.152.59.31:8080',
   MOBILE_CAM: process.env.MOBILE_CAM_IP || '10.152.59.144:8080'
 };
 
@@ -114,7 +113,7 @@ for (const [jct, ip] of Object.entries(JUNCTIONS)) {
   };
 }
 
-let lastGridlockCheck = 0;
+
 
 function updateHistory(jct) {
   const jst = state[jct];
@@ -122,8 +121,16 @@ function updateHistory(jct) {
   if (jst._history.length > 20) jst._history.shift();
 }
 
+let lastGridlockCheck = 0;
+let lastSignalOrchestration = 0;
+let currentGreenJunction = 'J1'; // Track which junction is currently green
+let lastJunctionSwitch = 0;
+const MIN_GREEN_MS = 10000; // 10 seconds minimum per junction turn
+
 function runCityIntelligence() {
   const now = Date.now();
+  orchestrateTrafficSignals(now); 
+
   if (now - lastGridlockCheck < 10000) return;
   lastGridlockCheck = now;
 
@@ -135,6 +142,60 @@ function runCityIntelligence() {
       details: `Critical load across nodes: ${heavy.join(', ')}. Diverting traffic flow.`
     });
   }
+}
+
+/** 🚦 AI Cognitive Orchestrator: Decision Logic Based on Image Datasets */
+function orchestrateTrafficSignals(now) {
+  if (now - lastSignalOrchestration < 2000) return;
+  lastSignalOrchestration = now;
+
+  const nodes = ['J1', 'J2', 'J3']; // Primary nodes to balance
+  const jStates = nodes.map(j => ({ id: j, ...state[j] }));
+
+  // 1. Emergency Priority (Hard Interrupt)
+  const emNode = jStates.find(s => s.ambulance || s.fire_truck || s.emergency);
+  if (emNode) {
+    if (currentGreenJunction !== emNode.id) {
+       switchSignal(emNode.id, 'EMERGENCY_PRIORITY');
+    }
+    return;
+  }
+
+  // 2. Minimum Turn Lock (Prevent flickering)
+  if (now - lastJunctionSwitch < MIN_GREEN_MS) return;
+
+  // 3. Demand-Based Selection (Weighting Traffic Score)
+  const highestDemand = jStates.sort((a, b) => b.traffic_score - a.traffic_score)[0];
+  
+  // Only switch if substantial difference or current is clear
+  const currentScore = state[currentGreenJunction].traffic_score;
+  const shouldSwitch = (highestDemand.traffic_score > currentScore + 15) || (currentScore < 5);
+
+  if (shouldSwitch && highestDemand.id !== currentGreenJunction) {
+    switchSignal(highestDemand.id, `DEMAND_LOAD_${highestDemand.traffic_score}%`);
+  }
+}
+
+function switchSignal(targetJct, reason) {
+  const nodes = ['J1', 'J2', 'J3'];
+  console.log(`[AI Orchestrator] Target: ${targetJct} | Reason: ${reason} | Executing city-wide sync.`);
+  
+  nodes.forEach(j => {
+    const cmd = (j === targetJct) ? 'GREEN' : 'RED';
+    mqttPublish(`smartjunction/${j}/cmd`, cmd);
+    state[j].signal = cmd; // Optimistic status update
+    state[j].last_update = new Date().toISOString();
+  });
+
+  currentGreenJunction = targetJct;
+  lastJunctionSwitch = Date.now();
+  io.emit('state_update', publicState());
+  
+  addAlert({
+    source: 'AI_ORCHESTRATOR',
+    type: 'SIGNAL_SYNC',
+    details: `Switching focus to ${targetJct} based on ${reason}`
+  });
 }
 
 /** Rolling alert log (newest first, capped at 200) */
@@ -353,16 +414,21 @@ async function detectTrafficLightStatus(jpegBuf, bbox, imgW, imgH) {
     const px = data.length / 3;
     for (let i = 0; i < data.length; i += 3) {
       const r = data[i], g = data[i + 1], b = data[i + 2];
-      // Spectral density checks
-      if (r > 190 && g < 100 && b < 100) rS++; // Red
-      else if (g > 190 && r < 100 && b < 150) gS++; // Green
-      else if (r > 180 && g > 150 && b < 100) yS++; // Yellow
+      
+      // Intelligent Spectral Density check (Brightness normalized)
+      const brightness = (r + g + b) / 3;
+      if (brightness < 40) continue; // Skip dark pixels
+
+      if (r > 160 && r > g * 1.6 && r > b * 1.6) rS++; // Red
+      else if (g > 160 && g > r * 1.3 && g > b * 1.1) gS++; // Green
+      else if (r > 160 && g > 130 && b < 100) yS++; // Yellow
     }
     
-    // Choose dominant chromatic emission
-    if (rS > gS && rS > yS && rS / px > 0.05) return 'RED';
-    if (gS > rS && gS > yS && gS / px > 0.05) return 'GREEN';
-    if (yS > rS && yS > gS && yS / px > 0.05) return 'YELLOW';
+    // Dynamic sensitivity threshold (1% of pixels minimum)
+    const threshold = px * 0.01; 
+    if (rS > gS && rS > yS && rS > threshold) return 'RED';
+    if (gS > rS && gS > yS && gS > threshold) return 'GREEN';
+    if (yS > rS && yS > gS && yS > threshold) return 'YELLOW';
     return 'UNKNOWN';
   } catch (_e) { return 'UNKNOWN'; }
 }
@@ -387,11 +453,14 @@ async function processFrame(jct, jpegBuf) {
 
   // Get image dimensions for box scaling
   let imgW = 640, imgH = 480;
-  try {
-    const meta = await sharp(jpegBuf).metadata();
-    imgW = meta.width  || imgW;
-    imgH = meta.height || imgH;
-  } catch (_e) { /* use defaults */ }
+  // Performance optimization: skip metadata check if we already have it
+  if (!jst._dim) {
+    try {
+      const meta = await sharp(jpegBuf).metadata();
+      jst._dim = { w: meta.width || 640, h: meta.height || 480 };
+    } catch (_e) { jst._dim = { w: 640, h: 480 }; }
+  }
+  imgW = jst._dim.w; imgH = jst._dim.h;
 
   let detections = [];
 
@@ -451,10 +520,14 @@ async function processFrame(jct, jpegBuf) {
       }
     }
 
-    // 🚦 Traffic Light State Capture
+    // 🚦 AI Signal Detection (Vision-based)
     if (cls === 'traffic light' || cls === 'traffic-light') {
-       det.signal = await detectTrafficLightStatus(jpegBuf, det.bbox, imgW, imgH);
-       if (det.signal !== 'UNKNOWN') jst.ai_signal = det.signal;
+       const detectedColor = await detectTrafficLightStatus(jpegBuf, det.bbox, imgW, imgH);
+       if (detectedColor !== 'UNKNOWN') {
+         det.signal = detectedColor;
+         jst.ai_signal = detectedColor;
+         console.log(`[AI Vision] ${jct} → Traffic Light status detected: ${detectedColor}`);
+       }
     }
   }
 
@@ -503,6 +576,8 @@ async function processFrame(jct, jpegBuf) {
         source: jct, type: emType,
         details: `Emergency vehicle detected at ${jct} — lane priority activated`,
       });
+      // 🚨 INSTANT SYNC: Don't wait for internal cycles
+      orchestrateTrafficSignals(now); 
     }
   } else {
     jst._lastEmBroadcast = 0;
@@ -526,10 +601,7 @@ async function processFrame(jct, jpegBuf) {
     jst._lastAccidentAlert = 0;
   }
 
-  // ── Push live update to dashboard ──────────────────────────
-  // Emit state only for this junction to save bandwidth if needed,
-  // but publicState() is small so we keep it. 
-  // ADDITION: emit discrete vision_update for low-latency drawing
+  // Push detections update (without the big image buffer to save bandwidth)
   io.emit('vision_update', {
     junction: jct,
     detections: jst.detections,
@@ -549,31 +621,39 @@ async function runInference(jct, ip) {
     return;
   }
   
-  // Skip polling if the junction is currently in "Virtual/Webcam" mode
   const now = Date.now();
   const lastUp = new Date(state[jct].last_update || 0).getTime();
-  if (state[jct]._isVirtual && (now - lastUp < 5000)) {
-     return; // Wait for pushed frame from browser instead
-  }
+  if (state[jct]._isVirtual && (now - lastUp < 5000)) return;
 
-  // AI Intelligence Loop: Try ESP32 endpoint first, fallback to IP Webcam (shot.jpg)
   const endpoints = [`http://${ip}/capture`, `http://${ip}/shot.jpg` ];
   
   for (const url of endpoints) {
     try {
       const resp = await axios.get(url, {
         responseType: 'arraybuffer',
-        timeout: 2000,
+        timeout: 800, // Very tight timeout for maximum speed
       });
       const jpegBuf = Buffer.from(resp.data);
       state[jct].cam_online = true;
-      state[jct]._isVirtual = false;
-      await processFrame(jct, jpegBuf);
-      return; // Success, skip further endpoints
+
+      // ⚡ IMMEDIATE PUSH: Send frame to dashboard before inference starts
+      io.emit('vision_update', {
+        junction: jct,
+        image: jpegBuf,
+        v: state[jct].vehicles, // last known
+        p: state[jct].persons,
+        t: state[jct].traffic_score
+      });
+
+      // 🧠 BACKGROUND AI: Start inference without blocking the next frame capture
+      setImmediate(() => {
+        processFrame(jct, jpegBuf).catch(err => {
+            console.error(`[AI Error ${jct}]`, err.message);
+        });
+      });
+
+      return;
     } catch (err) {
-      if (jct === 'MOBILE_CAM') {
-        process.stdout.write(`\r[Satellite Hub] Waiting for ${jct} @ ${url} ... (${err.message})\x1B[K`);
-      }
       state[jct].cam_online = false;
     }
   }
@@ -757,6 +837,14 @@ function addAlert(entry) {
   io.emit('state_update', publicState());
 }
 
+function clearAlerts() {
+  alerts.length = 0;
+  // Note: We don't reset alertsTotal here as it's a lifetime counter, 
+  // but you can if desired. We'll leave it to show system activity.
+  io.emit('alerts_history', []);
+  io.emit('state_update', publicState());
+}
+
 // ─────────────────────────────────────────────────────────────
 //  Public state (strips internal _* fields and detections array)
 // ─────────────────────────────────────────────────────────────
@@ -766,6 +854,7 @@ function publicState() {
     const { detections, _lastEmBroadcast, _lastAccidentAlert, ...rest } = s;
     snap[jct] = rest;
   }
+  snap.alerts_total = alertsTotal;
   return snap;
 }
 
@@ -1005,6 +1094,10 @@ io.on('connection', (socket) => {
     } catch (err) {
       console.error(`[WS PUSH] Error processing frame for ${junction}:`, err.message);
     }
+    socket.on('clear_alerts', () => {
+      clearAlerts();
+      console.log('[WS] Alerts cleared by user');
+    });
   });
 });
 

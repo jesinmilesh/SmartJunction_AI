@@ -756,6 +756,23 @@
       text-align: center;
     }
 
+    .btn-clear-mini {
+      background: rgba(255,255,255,.05);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: .65rem;
+      padding: 2px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all .2s;
+    }
+
+    .btn-clear-mini:hover {
+      background: var(--red);
+      color: #fff;
+      border-color: var(--red);
+    }
+
     .alerts-list {
       max-height: 340px;
       overflow-y: auto;
@@ -1217,6 +1234,10 @@
   <!-- ── Emergency Banner ───────────────────────────────────── -->
   <div id="emergency-banner">
     <div class="em-icon">🚨</div>
+    <div class="em-text">
+        <strong id="em-title">EMERGENCY DETECTED</strong>
+        <span id="em-desc">Priority lane activation in progress.</span>
+    </div>
     <button class="btn-clear-em" onclick="sendCmd('GLOBAL','CLEAR_EMERGENCY')">✕ Clear Emergency</button>
   </div>
 
@@ -1227,7 +1248,7 @@
       <div class="kpi-card green">
         <div class="kpi-label">Total Vehicles</div>
         <div class="kpi-value" id="kpi-total-vehicles" style="color:var(--green)">0</div>
-        <div class="kpi-sub">across all 4 junctions</div>
+        <div class="kpi-sub">across all 3 junctions</div>
       </div>
       <div class="kpi-card red">
         <div class="kpi-label">Emergency Alerts</div>
@@ -1241,7 +1262,7 @@
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Cameras Online</div>
-        <div class="kpi-value" id="kpi-cams-online" style="color:var(--teal)">0/4</div>
+        <div class="kpi-value" id="kpi-cams-online" style="color:var(--teal)">0/3</div>
         <div class="kpi-sub">ESP32-CAM nodes</div>
       </div>
       <div class="kpi-card">
@@ -1251,13 +1272,13 @@
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Cameras Active</div>
-        <div class="kpi-value" id="kpi-junctions-active" style="color:var(--accent)">0/4</div>
+        <div class="kpi-value" id="kpi-junctions-active" style="color:var(--accent)">0/3</div>
         <div class="kpi-sub">manual toggle</div>
       </div>
     </div>
 
     <!-- ── Junction Cards ──────────────────────────────────────── -->
-    <div class="section-title">4-Junction Live Monitor</div>
+    <div class="section-title">3-Junction Live Monitor</div>
     <div class="junction-grid" id="junction-grid">
       <!-- Populated by JS -->
     </div>
@@ -1307,16 +1328,6 @@
                 <div class="map-vehicles" id="mJ3v">0</div>
               </div>
             </div>
-            <div class="map-junction J4" id="map-J4" style="flex-direction:row;">
-              <div style="display:flex;flex-direction:column;gap:2px;text-align:right;">
-                <div class="map-jid">J4</div>
-                <div class="map-vehicles" id="mJ4v">0</div>
-              </div>
-              <div class="map-signal" style="width:44px;height:20px;flex-direction:row;">
-                <div class="map-dot r" id="mJ4r"></div>
-                <div class="map-dot y" id="mJ4y"></div>
-                <div class="map-dot g" id="mJ4g"></div>
-              </div>
             </div>
           </div>
         </div>
@@ -1325,7 +1336,10 @@
         <div class="alerts-panel">
           <div class="alerts-header">
             <h3>🔔 Live Alerts</h3>
-            <span class="alerts-count" id="alerts-count">0</span>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <span class="alerts-count" id="alerts-count">0</span>
+              <button class="btn-clear-mini" title="Clear alert history" onclick="socket.emit('clear_alerts')">Clear</button>
+            </div>
           </div>
           <div class="alerts-list" id="alerts-list">
             <div class="alert-item" style="color:var(--text-dim);font-size:.8rem;padding:20px 18px;">
@@ -1354,12 +1368,15 @@
     // ─────────────────────────────────────────────────────────────
     //  Config
     // ─────────────────────────────────────────────────────────────
-    const JUNCTIONS = ['J1', 'J2', 'J3', 'J4'];
+    const JUNCTIONS = ['J1', 'J2', 'J3', 'MOBILE_CAM'];
     const ALERT_ICONS = {
       AMBULANCE: '🚑',
       FIRE_TRUCK: '🚒',
       ACCIDENT: '💥',
       PATROL_NEEDED: '👮',
+      SIGNAL_SYNC: '📡',
+      GRIDLOCK: '🚥',
+      VIOLATION: '🚩',
       DEFAULT: 'ℹ️'
     };
 
@@ -1378,6 +1395,14 @@
     }
     tickClock(); setInterval(tickClock, 1000);
 
+    // Audio SFX
+    const sfx = {
+      beep:  new Audio('https://www.soundjay.com/buttons/sounds/button-37.mp3'),
+      alert: new Audio('https://www.soundjay.com/buttons/sounds/beep-01a.mp3'),
+      emergency: new Audio('https://www.soundjay.com/buttons/sounds/beep-04.mp3')
+    };
+    Object.values(sfx).forEach(s => s.load());
+
     // ─────────────────────────────────────────────────────────────
     //  Socket.IO
     // ─────────────────────────────────────────────────────────────
@@ -1394,33 +1419,68 @@
       setConnected(false);
       toast('Connection lost — reconnecting…', 'error');
     });
-    socket.on('state_update', data => { globalState = data; renderAll(); });
-    socket.on('new_alert', alert => addAlert(alert));
-    socket.on('alerts_history', list => { alertsData = list; renderAlerts(); });
+    socket.on('state_update', data => { 
+      globalState = data; 
+      if (data.alerts_total !== undefined) {
+          alertsTotal = data.alerts_total;
+      }
+      renderAll(); 
+    });
+    socket.on('new_alert', alert => {
+      addAlert(alert); 
+    });
+    socket.on('alerts_history', list => { 
+      alertsData = list; 
+      renderAlerts(); 
+    });
     socket.on('emergency_event', ev => {
       emergencyCount++;
       showEmergencyBanner(ev.junction, ev.type);
     });
 
     socket.on('vision_update', data => {
-        drawDetections(data.junction, data.detections);
+        drawDetections(data.junction, data);
     });
 
-    function drawDetections(jct, detections) {
+    function drawDetections(jct, data) {
         const canvas = document.getElementById(`det-canvas-${jct}`);
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
         
-        detections.forEach(det => {
-            const [x, y, w, h] = det.bbox;
-            const sx = canvas.width / 640; const sy = canvas.height / 480;
-            ctx.strokeStyle = '#388bfd'; ctx.lineWidth = 2;
-            ctx.strokeRect(x * sx, y * sy, w * sx, h * sy);
-            ctx.fillStyle = '#388bfd'; ctx.font = 'bold 8px Inter';
-            ctx.fillText(det.class.toUpperCase(), x * sx, y * sy - 4);
-        });
+        // 1. Update Image if present (Stage 1: Raw Feed)
+        if (data.image) {
+           const blob = new Blob([data.image], { type: 'image/jpeg' });
+           const url = URL.createObjectURL(blob);
+           const img = document.getElementById(`cam-${jct}`);
+           if (img) {
+              img.onload = () => URL.revokeObjectURL(url);
+              img.src = url;
+              img.style.opacity = '1';
+           }
+        }
+        
+        // 2. Update Stats if present
+        if (data.v !== undefined) {
+          setEl(`sv-${jct}`, data.v);
+          setEl(`sp-${jct}`, data.p);
+          setEl(`ts-${jct}`, data.t + '%');
+          const fill = document.getElementById(`tf-${jct}`);
+          if (fill) fill.style.width = data.t + '%';
+        }
+
+        // 3. Update Bbox Detections if present (Stage 2: AI Layer)
+        if (data.detections) {
+            canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            data.detections.forEach(det => {
+                const [x, y, w, h] = det.bbox;
+                const sx = canvas.width / 640; const sy = canvas.height / 480;
+                ctx.strokeStyle = '#388bfd'; ctx.lineWidth = 2;
+                ctx.strokeRect(x * sx, y * sy, w * sx, h * sy);
+                ctx.fillStyle = '#388bfd'; ctx.font = 'bold 8px Inter';
+                ctx.fillText(det.class.toUpperCase(), x * sx, y * sy - 4);
+            });
+        }
     }
 
     function setConnected(ok) {
@@ -1493,10 +1553,10 @@
 
       set('kpi-total-vehicles', totalVehicles);
       set('kpi-em-count', emCount);
-      set('kpi-avg-traffic', Math.round(totalScore / 4) + '%');
-      set('kpi-cams-online', camsOnline + '/4');
+      set('kpi-avg-traffic', Math.round(totalScore / JUNCTIONS.length) + '%');
+      set('kpi-cams-online', camsOnline + '/' + JUNCTIONS.length);
       set('kpi-alerts-total', alertsTotal);
-      set('kpi-junctions-active', junctionsActive + '/4');
+      set('kpi-junctions-active', junctionsActive + '/' + JUNCTIONS.length);
 
       // Update toggle inputs in UI
       JUNCTIONS.forEach(j => {
@@ -1662,12 +1722,13 @@
         setEl(`sv-${jct}`, hasAI ? (s.vehicles ?? '0') : '---');
         setEl(`sp-${jct}`, hasAI ? (s.persons ?? '0') : '---');
         setEl(`sd-${jct}`, (s.dist === 999 || s.dist === null) ? '---' : s.dist);
-        setEl(`ss-${jct}`, sig || 'OFFLINE');
+        setEl(`ss-${jct}`, s.ai_signal || sig || 'OFF');
         
         const ssEl = document.getElementById(`ss-${jct}`);
         if (ssEl) {
-          if (!sig || sig === 'OFFLINE') ssEl.style.color = 'var(--text-dim)';
-          else ssEl.style.color = sig === 'GREEN' ? 'var(--green)' : sig === 'YELLOW' ? 'var(--yellow)' : 'var(--red)';
+          const combinedSig = s.ai_signal || sig;
+          if (!combinedSig || combinedSig === 'OFFLINE' || combinedSig === 'UNKNOWN') ssEl.style.color = 'var(--text-dim)';
+          else ssEl.style.color = combinedSig === 'GREEN' ? 'var(--green)' : combinedSig === 'YELLOW' ? 'var(--yellow)' : 'var(--red)';
         }
         
         const score = hasAI ? (s.traffic_score || 0) : 0;
@@ -1699,14 +1760,9 @@
       }
 
       // Camera image refresh — match server FPS (5 FPS = 200ms)
-      clearInterval(camRefreshTimers[jct]);
+      // Push-based active: Redundant HTTP polling interval disabled for maximum speed
+      if (camRefreshTimers[jct]) clearInterval(camRefreshTimers[jct]);
       camRefreshTimers[jct] = null;
-      if (s.cam_online && !s._isVirtual) {
-        camRefreshTimers[jct] = setInterval(() => {
-          const img = document.getElementById(`cam-${jct}`);
-          if (img) img.src = `/api/frame/${jct}?t=${Date.now()}`;
-        }, 200);
-      }
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -1736,13 +1792,23 @@
     //  Alerts
     // ─────────────────────────────────────────────────────────────
     function addAlert(alert) {
+      // Audio cue for high priority
+      if (['AMBULANCE','FIRE_TRUCK','ACCIDENT','VIOLATION'].includes(alert.type)) {
+          sfx.emergency.play().catch(() => {});
+      } else {
+          sfx.beep.play().catch(() => {});
+      }
+
+      // prevent exact duplicates in list
+      const exists = alertsData.some(a => a.ts === alert.ts && a.details === alert.details);
+      if (exists) return;
+
       alertsData.unshift(alert);
-      if (alertsData.length > 200) alertsData.pop();
-      alertsTotal++;
+      if (alertsData.length > 100) alertsData.pop();
+      // alertsTotal is synced via state_update meta
       renderAlerts();
-      set('kpi-alerts-total', alertsTotal);
       // Toast for critical
-      if (['AMBULANCE', 'FIRE_TRUCK', 'ACCIDENT'].includes(alert.type)) {
+      if (['AMBULANCE', 'FIRE_TRUCK', 'ACCIDENT', 'VIOLATION'].includes(alert.type)) {
         toast(`${ALERT_ICONS[alert.type] || '⚠️'} ${alert.type} at ${alert.source}`, 'error');
       }
     }
